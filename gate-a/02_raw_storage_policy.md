@@ -22,6 +22,10 @@ raw/{source}/{collected_date}/{source_doc_key}__v{version_seq}.{ext}
 
 `{source_doc_key}__v{version_seq}.{ext}` 형태로, source 식별자는 상위 폴더가 이미 담당하므로 파일명에는 자연키와 버전만 넣는다.
 
+**금투협 첨부 (12 반영)**: 한 공고에 첨부가 2~3종이므로 `{source_doc_key}__v{n}__{file_role}.{ext}` 형태로 역할을 파일명에 드러낸다. `file_role`은 01의 값(`prospectus` / `prospectus_simple` / `change_summary`)을 그대로 쓴다.
+**근거**: 금투협은 문서 1건이 공고 단위라 `document_type`이 「금투협 수시공시」 한 값이다. 파일명에 역할이 없으면 저장된 파일만 보고 어느 것이 채점 대상 투자설명서인지 알 수 없다. 서버 저장명(`fileNm`)은 `1e8761fba739…-3081-20260814100636.pdf` 형태라 역할을 담지 않는다.
+**메타데이터 추가 항목**: `file_name`(서버 저장명 `fileNm` 원문), `original_file_name`(`originalFileNm`), `server_path`. 중복 판정에 `fileNm`을 쓰므로 반드시 남긴다.
+
 **미확인**: 국가법령정보처럼 자연키가 `MST`+`JO` 조합인 소스의 파일명 표기 방식은 01의 조인 미확인 항목이 풀린 뒤 정한다.
 
 ## 원본 불변 원칙
