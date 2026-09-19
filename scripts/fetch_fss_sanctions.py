@@ -47,8 +47,9 @@ FIELDS = ["emOpenNo", "examMgmtNo", "transCode", "emOpenSeq", "actGbn",
           "finInstName", "actReqDate", "actOrganCon", "actOfficerCon",
           "actEmpCon", "actObjContent", "inputDate", "inputMan"]
 
+# 값의 근거는 gate-a/15 9절. CHUNK_DAYS는 한 응답의 건수 상한을 몰라 잠정값이다.
 CALL_INTERVAL = 1.0     # 방어적 수집 원칙(조사 상세 2-1)
-CHUNK_DAYS = 90         # 페이징이 없어 기간을 쪼갠다
+CHUNK_DAYS = 90         # 페이징이 없어 기간을 쪼갠다 (15 10절 미확인 13)
 
 
 def load_env(path: str = ".env") -> None:

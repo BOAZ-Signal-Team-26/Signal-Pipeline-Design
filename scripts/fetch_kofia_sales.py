@@ -58,6 +58,7 @@ FUND_TEMPLATE = """<?xml version="1.0" encoding="utf-8"?>
 </message>"""
 
 # 방어적 수집 원칙(조사 상세 2-1): 호출 간격 1초 이상, 동시 요청 1개.
+# 값의 근거는 gate-a/15 9절. 바꾸려면 거기부터 고친다.
 CALL_INTERVAL = 1.0
 
 
