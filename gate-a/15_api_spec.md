@@ -405,7 +405,7 @@ HWP 5.0은 OLE 복합문서다. `BodyText/Section0`을 **zlib raw deflate(`-15`)
 |---|---|---|
 | `DATA_GO_KR_API_KEY` | 공공데이터포털 | 있음 |
 | `KRX_API_KEY` | KRX | 있음 (+ 서비스 승인 완료) |
-| `OPENDART_API_KEY` | OPEN DART | 미확인 |
+| `OPENDART_API_KEY` | OPEN DART | **비어 있음 (09-20 확인).** M1 「접근 권한 4종 중 3종」의 3종째가 이것이다 |
 | `FINLIFE_API_KEY` | finlife | 소스 존치 미결 |
 | `LAW_API_OC` | 국가법령정보 | **비어 있음** |
 | `FSS_API_KEY` | 금감원 제재·경영유의 | **미발급** — `.env.example`에도 아직 없다 |

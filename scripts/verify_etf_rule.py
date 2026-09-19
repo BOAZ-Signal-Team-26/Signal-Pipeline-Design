@@ -95,10 +95,12 @@ def fetch_krx_etf(key: str, base_date: str) -> list[dict[str, Any]]:
     payload = fetch_json("%s?basDd=%s" % (KRX_ETF, base_date), {"AUTH_KEY": key})
     if isinstance(payload, dict) and "respCode" in payload:
         raise RuntimeError("KRX 오류: %s" % payload)
-    for value in payload.values():
-        if isinstance(value, list):
-            return value
-    raise RuntimeError("KRX 응답에 목록이 없다: %s" % str(payload)[:200])
+    # 응답 루트 키는 `OutBlock_1` 하나다 (09-20 실측, gate-a/15 3절).
+    # 과거 일자도 최소 10년까지 그대로 돌려준다.
+    rows = payload.get("OutBlock_1")
+    if rows is None:
+        raise RuntimeError("KRX 응답에 OutBlock_1이 없다: %s" % str(payload)[:200])
+    return rows
 
 
 def fetch_funds(key: str, cache: str | None = None) -> list[dict[str, Any]]:
