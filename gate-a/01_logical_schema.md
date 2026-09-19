@@ -326,6 +326,116 @@
 
 법인명에 상품명 규칙을 쓰면 안 되는 이유는 두 가지다. (1) 법인명에는 호수·클래스 표기가 없어 4단계가 헛돈다. (2) 법인명에는 상품명에 없는 **상호 변경**이 있어, 운용사 536건 중 97건(18%)이 구 상호를 갖고 그중 44건은 업종 접미사까지 바뀐다(`reference/kofia_mgmt_codes.csv`). 유사도만으로는 「누림투자자문」과 「누림자산운용」을 잇지 못한다.
 
+## ERD (09-20 신설)
+
+표 9개의 관계를 그림으로 옮긴 것이다. **새로 설계한 것이 없다** — 위 절들에 흩어져 있는
+관계를 한 장에 모았을 뿐이다. 칼럼은 키와 판별에 필요한 것만 넣었다.
+
+```mermaid
+erDiagram
+    product {
+        id product_id PK
+        string short_code UK "5자리 영숫자. 1차 조인 키"
+        enum product_category "펀드/ETF/ELS"
+        boolean is_etf "2단 판정 결과(13). 파생 아님"
+        enum etf_confidence "KRX_CONFIRMED/NAME_ONLY/PENDING"
+        string fund_key "클래스를 펀드로 묶는 파생키 (미확인 23)"
+        id manager_id FK "-> distributor (운용사)"
+    }
+    distributor {
+        id distributor_id PK
+        string corp_code "DART 법인 고유번호"
+        string kofia_mgmt_code "금투협 운용사코드 3자리"
+        enum distributor_type "운용사/판매사/미상"
+    }
+    product_distributor {
+        id product_id PK,FK
+        id distributor_id PK,FK
+        string snapshot_month PK "YYYYMM. 09-20 신설. 자연키 3필드"
+        id source_document_id FK "-> document. 현재 경로에서는 항상 NULL (14)"
+    }
+    document {
+        id document_id PK
+        string source_doc_key UK "소스별 자연키"
+        enum document_type "투자설명서/제재공시/분쟁조정결정문/금투협 수시공시 등"
+        boolean is_correction
+        id lineage_id FK "self. 최초 문서"
+        id distributor_id FK "nullable. 상품 미연결 문서용"
+    }
+    document_product {
+        id document_id PK,FK
+        id product_id PK,FK
+        enum match_method "code/string/manual"
+        float match_score
+    }
+    section {
+        id section_id PK
+        id document_id FK
+        int section_seq
+    }
+    score {
+        id score_id PK
+        id section_id FK
+        enum score_type "CDI/고지충실도"
+    }
+    match_failure {
+        id failure_id PK
+        string source
+        enum failure_reason_code
+        id related_document_id FK "nullable"
+        id top1_candidate_product_id FK "nullable. 후보일 뿐 매칭 아님"
+    }
+    raw_object {
+        id raw_object_id PK
+        id document_id FK
+        enum file_role "cover_xml/body_pdf/prospectus 등"
+        string sha256 "소스를 가로질러 같은 파일을 식별"
+    }
+
+    distributor ||--o{ product : "manager_id (운용사)"
+    product ||--o{ product_distributor : "N:M 브릿지"
+    distributor ||--o{ product_distributor : "N:M 브릿지"
+    document |o--o{ product_distributor : "source_document_id. 현재 항상 NULL (14)"
+    document ||--o{ document_product : "1:N은 수시공시만 (12). 정기공시는 평균 1.08행"
+    product ||--o{ document_product : "한 상품에 문서 여러 버전"
+    document ||--o{ section : "1:N"
+    section ||--o{ score : "1:N. 점수유형별 1행"
+    document ||--o{ raw_object : "1:N. DART 2개, 금투협 2~3개"
+    document ||--o{ document : "lineage_id 자기참조. 원본→정정본 사슬"
+    distributor |o--o{ document : "nullable. 상품 미연결 문서용. 분쟁조정은 마스킹이라 이 값도 못 채운다 (14)"
+    document |o--o{ match_failure : "nullable"
+    product |o--o{ match_failure : "top1_candidate_product_id. nullable"
+```
+
+| 영문 | 한글 표 이름 |
+|---|---|
+| product / distributor / product_distributor | 상품 / 판매사 / 상품_판매사 |
+| document / document_product | 문서 / 문서_상품 |
+| section / score / match_failure / raw_object | 절 / 점수 / 매칭_실패 / 원본파일 |
+
+### 그림만으로 안 보이는 것
+
+- **`document_product`를 둔 이유**는 금투협 수시공시 1건(공고 PDF 1개)이 클래스 상품 여럿을 가리키기 때문이다. **이 1:N은 수시공시(`2OF`)에서만 확인됐다** — 정기공시(`2RF`)는 평균 1.08행으로 사실상 1:1이다.
+- **`product_distributor`도 같은 이유의 N:M 브릿지**다. 상품 표에는 이제 판매사 FK가 없고 운용사만 `manager_id`로 남는다.
+- **분쟁조정·제재공시·경영유의공시는 의도적으로 `document_product` 행을 만들지 않는다.** 붙일 값 자체가 없고, 시도하면 실패 로그만 쌓여 통계를 오염시킨다. `document.distributor_id`로만 약하게 잇되 **분쟁조정은 그 값조차 못 채운다** — 「문서 표에만 존재하는 미연결 레코드」가 정상 상태다.
+- **`is_etf`는 파생 계산이 아니다.** KRX 대조(1차) → 문자열 규칙(2차)의 판정 결과이고, 어느 단에서 정해졌는지를 `etf_confidence`가 남긴다.
+
+### 그림에 넣지 않은 것 — 문서에 관계가 명시돼 있지 않다
+
+그리려다 근거가 없어 뺀 것들이다. **이 목록 자체가 설계 구멍을 가리킨다.**
+
+| # | 항목 | 왜 못 그렸나 |
+|---|---|---|
+| 1 | `document.corp_code` ↔ `distributor.corp_code` | 둘 다 DART 법인코드인데 **이 문서 어디에도 FK로 명시하지 않았다.** 값 체계는 같아 보이나 관계선을 그릴 근거가 없다 |
+| 2 | `distributor.kofia_mgmt_code` ↔ `corp_code` 대응 | 같은 표 안인데 대응 규칙이 미확인이다(문자열 매칭으로 1회 고정 필요) |
+| 3 | ELS의 `document_product` 매칭 키 | **ELS 식별 키 자체가 미정**이라 어떤 키로 붙는지 규칙이 없다 |
+| 4 | 국가법령정보 | 9개 표 어디에도 대응 엔티티가 없다. 조인인지 텍스트 참조인지가 미정(미확인 3) |
+| 5 | `product.isu_cd` ↔ KRX | 연결 수단이 코드가 아니라 **이름**이라 표 사이의 FK가 아니다 |
+
+**5번은 불명확이 아니라 확인된 사실이다.** `fin_prdt_cd`(finlife)도 마찬가지로 **관계선이 없는 것이 맞는 상태**다 — 조인 키로 성립하지 않는다(J9).
+
+SCD 예비 칸(`valid_from`·`valid_to`·`version_no`·`is_current`)은 그림에 넣지 않았다. 관문 B에서 물리화될 이력 관리용이라 관계 자체가 아직 확정이 아니다.
+
 ## 미확인 목록 (현황표 09-14 / 조인 대조표 09-16에서 채울 것)
 
 1. ~~위험등급 위치·표기~~ → 해소(web-verify A1): 표지 요소 eleId=2, 「n등급[문구]」 표기.
