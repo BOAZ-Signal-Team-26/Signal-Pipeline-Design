@@ -119,18 +119,23 @@ def main():
     load_env()
     data_key = os.environ.get("DATA_GO_KR_API_KEY", "").strip()
     krx_key = os.environ.get("KRX_API_KEY", "").strip()
-    missing = [n for n, v in [("DATA_GO_KR_API_KEY", data_key), ("KRX_API_KEY", krx_key)] if not v]
-    if missing:
-        sys.exit(".env 에 %s 가 비어 있다. .env.example 참고." % ", ".join(missing))
+    if not data_key:
+        sys.exit(".env 에 DATA_GO_KR_API_KEY 가 비어 있다. .env.example 참고.")
 
-    print("KRX ETF 정답지 조회 (%s)" % args.base_date, file=sys.stderr)
-    krx_rows = fetch_krx_etf(krx_key, args.base_date)
-    # 종목명 필드명이 배포마다 다를 수 있어 후보를 순서대로 찾는다.
-    name_field = next((f for f in ("ISU_NM", "ISU_ABBRV", "ISU_KOR_NM") if krx_rows and f in krx_rows[0]), None)
-    if not name_field:
-        sys.exit("KRX 응답에서 종목명 필드를 찾지 못했다: %s" % list(krx_rows[0])[:15])
-    krx = {normalize(r[name_field]): r for r in krx_rows}
-    print("  KRX ETF %d건 (정규화 후 %d건)" % (len(krx_rows), len(krx)), file=sys.stderr)
+    # KRX 키가 없으면 규칙이 몇 건을 잡는지까지만 세고 멈춘다. 누락·오탐은
+    # 정답지가 있어야 나오므로 판정은 유보한다.
+    krx = {}
+    if krx_key:
+        print("KRX ETF 정답지 조회 (%s)" % args.base_date, file=sys.stderr)
+        krx_rows = fetch_krx_etf(krx_key, args.base_date)
+        krx_name_fields = [f for f in ("ISU_NM", "ISU_ABBRV", "ISU_KOR_NM", "ISU_SRT_CD")
+                           if krx_rows and f in krx_rows[0]]
+        if not krx_name_fields:
+            sys.exit("KRX 응답에서 종목명 필드를 찾지 못했다: %s" % list(krx_rows[0])[:15])
+        krx_by_field = {f: {normalize(r[f]): r for r in krx_rows} for f in krx_name_fields}
+        print("  KRX ETF %d건, 이름 후보 필드 %s" % (len(krx_rows), krx_name_fields), file=sys.stderr)
+    else:
+        print("KRX_API_KEY 없음 — 공공데이터포털 쪽만 집계한다 (부분 실행)", file=sys.stderr)
 
     print("공공데이터포털 펀드상품기본정보 조회", file=sys.stderr)
     funds = fetch_data_go_kr(data_key, args.limit_pages)
@@ -140,6 +145,42 @@ def main():
         if ETF_MARKER in normalized:
             rule_hits[normalized] = fund
     print("  전체 %d건 중 「상장지수」 포함 %d건" % (len(funds), len(rule_hits)), file=sys.stderr)
+
+    if not krx:
+        print("\n=== 부분 결과 (KRX 정답지 없음) ===")
+        print("  공공데이터포털 전체      %6d" % len(funds))
+        print("  「상장지수」 포함(규칙 적중) %6d" % len(rule_hits))
+        print("\n누락·오탐률은 KRX 정답지가 있어야 나온다. 판정 유보.")
+        os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
+        with io.open(args.out, "w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["구분", "정규화명", "srtnCd", "asoStdCd", "ISU_CD"])
+            for name in sorted(rule_hits):
+                fund = rule_hits[name]
+                writer.writerow(["규칙적중", name, fund.get("srtnCd", ""), fund.get("asoStdCd", ""), ""])
+        print("상세: %s" % args.out)
+        return
+
+    # 두 소스의 이름 공간이 다를 수 있다. 공공데이터포털 `fndNm`은 정식 펀드명
+    # (「삼성KODEX200증권상장지수투자신탁[주식]」)이고, KRX 종목명은 상장 약명
+    # (「KODEX 200」)인 경우가 있다. 완전일치만 쓰면 전부 불일치로 나와 누락률이
+    # 거짓으로 100%에 가까워진다. 그래서 후보 필드마다 일치 수를 세어 가장 잘
+    # 붙는 것을 고르고, 그래도 낮으면 판정하지 않고 멈춘다.
+    scored = sorted(
+        ((len(set(table) & set(rule_hits)), field, table) for field, table in krx_by_field.items()),
+        reverse=True,
+    )
+    hit_count, name_field, krx = scored[0]
+    print("\n이름 필드별 완전일치 수: %s" % ", ".join(
+        "%s=%d" % (f, n) for n, f, _ in scored))
+    print("선택한 필드: %s" % name_field)
+
+    coverage = hit_count / len(krx) if krx else 0
+    if coverage < 0.5:
+        print("\n중단: 어느 이름 필드로도 KRX ETF의 절반을 붙이지 못했다 (최고 %.1f%%)." % (coverage * 100))
+        print("두 소스의 이름 공간이 다르다는 뜻이며, 이 상태의 누락·오탐률은 ETF 규칙이")
+        print("아니라 이름 매칭 실패를 재게 된다. 대조 축을 바꿔야 한다 (gate-a/13 참조).")
+        sys.exit(2)
 
     both = set(krx) & set(rule_hits)                 # 일치
     missed = set(krx) - set(rule_hits)               # 누락: KRX엔 ETF인데 규칙이 못 잡음
