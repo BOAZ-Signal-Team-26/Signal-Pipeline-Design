@@ -248,7 +248,7 @@ Table section {
   점수를 절 단위로 저장하기 위한 전제 표(드릴다운: 문서 단위가 아니라 절 단위 점수).
   함정: 재처리(파서 버전) 개념이 없다(09-20 신설, 미확인 24) — (document_id, section_seq)
   만으로는 어느 실행에서 나온 절인지 구분하지 못한다. 부·절 분할 알고리즘이 아직
-  진화 중이라(17: 161/163) 같은 원본을 개선된 파서로 다시 뽑으면 절 경계가 달라질 수
+  진화 중이라(17: 292/294) 같은 원본을 개선된 파서로 다시 뽑으면 절 경계가 달라질 수
   있는데, 재추출 시 덮어쓸지 쌓을지가 물리 설계에서 반드시 막혀야 한다.
   '''
 }
@@ -402,108 +402,52 @@ Table raw_object {
 // 결정 주체를 정해야 한다.
 
 //////////////////////////////////////////////////////////////////////////////
-// 제안 (미확정) — data-scientist, 09-20
+// 제안 (미확정) — data-scientist, 09-20. 아직 01에 반영되지 않았다
 //////////////////////////////////////////////////////////////////////////////
 //
 // 이 저장소의 표기 규칙: 결정(작성자가 정한 것) → 관문 미팅에서 4인 확정 → (사실).
 // 아래는 아직 "제안" 단계이며 gate-a/01_logical_schema.md에 반영되지 않았다. 위
-// 본문(표 9개·enum·부록)은 01에 있는 확정/결정 사항만 옮긴 것이고, 이 블록은 섞지
-// 않기 위해 통째로 블록 주석(/* */)으로 감싸 dbdiagram에 렌더되지 않게 했다 —
-// 캔버스에 붙이면 확정본 9개 표만 보인다. 01이 반영되고 관문에서 확정되면 이 블록의
-// 주석을 벗기고 본문으로 옮긴다.
+// 본문(표 9개·enum·부록)은 01에 있는 확정/결정 사항만 옮긴 것이고, 섞이지 않도록
+// 전부 주석으로 분리했다 — dbdiagram에 붙이면 확정본 9개 표만 렌더된다. 01에
+// 반영되고 관문에서 확정되면 이 블록을 위 본문으로 옮기고 주석을 벗긴다.
 //
-// axis를 enum이 아니라 별도 lookup 표로 두자는 제안의 근거: CDI 4축 변수표가
-// 09-23에 나올 예정이라, 지금 enum으로 축 값을 굳히면 변수표가 나올 때마다 enum을
-// 늘리는 스키마 변경(마이그레이션)이 필요해진다. lookup 표로 두면 행 추가만으로
-// 확장된다.
-//
-/*
-// -- 1) score 표에 추가될 제안 칼럼 (기존 score 표를 대체하는 것이 아니라 덧붙이는 안) --
-// Table score (제안 추가분만 표기, 기존 칼럼은 위 확정본 참고):
-//   axis_id            int     [ref: > axis.axis_id, note: 'nullable. CDI 4축을 축별로 저장하는 제안(축 변수표는 09-23 예정). 고지충실도가 축 구조인지 미확인이라 nullable']
-//   normalized_score   decimal [note: '축 단위 정규화값(제안). 기존 score.normalized_score(비교 모집단 단위, 04 확정)와 이름이 같아 실제 반영 시 개명 검토 필요']
-//   population_snapshot_id int [ref: > population_snapshot.population_snapshot_id, note: '기존 comparison_population_key(문자열, 04 확정)를 FK로 대체하자는 제안']
-//   scoring_formula_version varchar [note: '채점 공식(CDI 산식)이 관문 C까지 계속 바뀌므로 버전 식별자가 필요하다는 제안. 01 미확인 24(재처리 버전 없음)와 같은 문제의식']
-//
-// -- 2) 신설 제안 표: population_snapshot (층별 분포를 매번 재계산하지 않기 위함) --
-// Table population_snapshot {
-//   population_snapshot_id int [pk]
-//   baseline_date date
-//   product_category product_category_enum
-//   risk_grade int [note: 'nullable']
-//   fund_type varchar [note: 'nullable. 04 3-2절 (b)안 — 층화 축 대체 후보']
-//   product_class_code varchar [note: 'nullable. 층화 축 대체 후보']
-//   stratification_axis_choice varchar [note: '이 스냅숏이 실제로 쓴 층화 축(위험등급 vs fndTp 등) 기록']
-//   n int
-//   mean decimal
-//   sd decimal
-//   p10 decimal
-//   p25 decimal
-//   p50 decimal
-//   p75 decimal
-//   p90 decimal
-//   excluded_pending_etf_count int [note: 'etf_confidence=PENDING 제외 건수(04)']
-//   below_min_threshold_flag boolean [note: '층당 30건(잠정, 04 4절) 미달 여부']
-//   computed_at timestamp
-// }
-//
-// -- 3) 신설 제안 소표: axis --
-// Table axis {
-//   axis_id int [pk]
-//   axis_code varchar
-//   axis_name varchar
-//   effective_from date
-// }
-//
-// -- 4) section 표에 추가될 제안 칼럼 --
-// Table section (제안 추가분만 표기, 기존 칼럼은 위 확정본 참고):
-//   part_seq          int [note: '부(部) 단위 순번(제안). 현재 section_seq가 부 안의 순번인지 문서 전체 순번인지 불명확한 문제 — 절 표에 부·절 계층이 아직 없다']
-//   char_start        int [note: '구조 접근성 축(조항의 문서 내 상대 위치, Project-Management 08-m1-decisions 2-6절 선택지 3안 관련) 계산 방법이 열려 있어, 방법이 확정돼도 재적재가 필요 없도록 먼저 확보하자는 제안']
-//   char_length       int [note: '위와 동일 사유']
-//   extraction_run_id int [note: '01 미확인 24(재처리 버전 없음) 그대로 — 절 표 재처리 시 실행 구분용']
-*/
-
-//////////////////////////////////////////////////////////////////////////////
-// 제안 (미확정) — 아직 01에 반영되지 않았다
-//////////////////////////////////////////////////////////////////////////////
-//
-// 아래는 09-20에 data-scientist 검토에서 나온 칼럼 제안이다. 이 저장소의 표기 규칙상
-// 「결정」은 관문 미팅에서 4인이 확인해야 「사실」이 되므로, 위 본문(= 01에 있는 것)과
-// 섞지 않고 주석으로 분리해 둔다. 채택되면 01에 먼저 반영하고 그때 본문으로 옮긴다.
-//
-// 왜 지금 적어 두는가: 이 중 둘(모집단 스냅숏, 재현성 칸)은 칸 없이 적재를 시작하면
-// 나중에 끼워 넣을 수 없다. 적재분 전체를 다시 만들어야 한다.
+// 왜 지금 적어 두는가: 이 중 둘(모집단 스냅숏, 재처리 실행 칸)은 칸 없이 적재를
+// 시작하면 나중에 끼워 넣을 수 없다 — 적재분 전체를 다시 만들어야 한다.
 //
 // --- 제안 1. 점수를 CDI 4축별로 저장한다 -----------------------------------
 // 지금 score 표는 score_type(CDI/고지충실도)만 구분하고 축은 나누지 않는다.
 // 종합 하나로 뭉치면 (a) 드릴다운에서 「어느 축이 나쁜가」를 못 보여주고
 // (b) 잔차 회귀에서 「위험등급 통제 후 어느 축이 잔차를 설명하는가」를 못 본다.
 //
-//   score.axis_id                 int  [null, ref: > axis.axis_id]
-//     // nullable — 고지충실도가 축 구조인지는 미확인(01 미확인 9)
+//   score.axis_id                 int     [null, ref: > axis.axis_id]
+//     // nullable — 고지충실도가 축 구조인지는 미확인(04 2절)
 //   score.normalized_score        decimal [null]
-//   score.scoring_formula_version varchar  // 채점 공식은 관문 C까지 바뀐다
+//     // 축 단위 정규화값. 기존 score.normalized_score(비교 모집단 단위, 04 확정)와
+//     // 이름이 같다 — 실제 반영 시 개명 검토 필요
+//   score.scoring_formula_version varchar
+//     // 채점 공식(CDI 산식)이 관문 C까지 계속 바뀐다. 01 미확인 24와 같은 문제의식
 //
 //   Table axis {                            // enum이 아니라 lookup 표로 두는 이유:
 //     axis_id       int  [pk]               // CDI 4축 변수표가 09-23에 나올 예정이라
-//     axis_code     varchar                 // 지금 enum으로 굳히면 그때마다 스키마 변경이다.
-//     axis_name     varchar                 // 표로 두면 행만 채우면 된다.
-//     effective_from date
+//     axis_code     varchar                 // 지금 enum으로 축 값을 굳히면 그때마다
+//     axis_name     varchar                 // 스키마 변경(마이그레이션)이 필요해진다.
+//     effective_from date                   // lookup 표로 두면 행 추가만으로 확장된다.
 //   }
 //
 // --- 제안 2. comparison_population_key를 표로 승격한다 ----------------------
-// 지금은 문자열 칸 하나다. 문제 둘이 있다.
-//   (a) 층화 축이 아직 확정이 아니다(04 3-2 (c)안: risk_grade / fndTp 병행 확보 후
-//       관문 C에서 선택). 문자열에 축 조합을 지금 굳히면 축이 바뀔 때 전부 재작성이다.
-//   (b) **재현성이 깨진다.** 층별 분포를 점수 계산 때마다 재계산하면, 회귀를 두 번
-//       돌리는 사이에 데이터가 늘어 **같은 키가 다른 분포를 가리킨다.**
+// 지금은 문자열 칸 하나다(04 확정: 정의=상품군×위험등급). 문제 둘이 있다.
+//   (a) 층화 축이 아직 확정이 아니다(04 3-2절 (c)안: risk_grade / fndTp 병행 확보
+//       후 관문 C에서 선택). 문자열에 축 조합을 지금 굳히면 축이 바뀔 때 전부
+//       재작성이다.
+//   (b) 재현성이 깨진다. 층별 분포를 점수 계산 때마다 재계산하면, 회귀를 두 번
+//       돌리는 사이에 데이터가 늘어 같은 키가 다른 분포를 가리키게 된다.
 //
 //   Table population_snapshot {
 //     population_snapshot_id      int  [pk]
 //     baseline_date               date
 //     product_category            product_category_enum
 //     risk_grade                  int      [null]  // 층화 축 후보 1
-//     fund_type                   varchar  [null]  // 층화 축 후보 2 (04 3-2 (c))
+//     fund_type                   varchar  [null]  // 층화 축 후보 2 (04 3-2절 (c))
 //     product_class_code          varchar  [null]  // 상동
 //     stratification_axis_choice  varchar          // 이 스냅숏이 무엇으로 층을 나눴는지
 //     n                           int
@@ -514,31 +458,31 @@ Table raw_object {
 //     p50                         decimal
 //     p75                         decimal
 //     p90                         decimal
-//     excluded_pending_etf_count  int   // 04가 요구한 「PENDING 제외 건수 기록」
+//     excluded_pending_etf_count  int     // 04가 요구한 "PENDING 제외 건수 기록"
 //     below_min_threshold_flag    boolean // 04 4절의 층당 30건 하한 미달 표시
 //     computed_at                 timestamp
 //   }
 //   score.population_snapshot_id  int [ref: > population_snapshot.population_snapshot_id]
-//     // 기존 comparison_population_key 문자열을 이 FK로 대체
+//     // 기존 comparison_population_key(문자열)를 이 FK로 대체하는 제안
 //
 // --- 제안 3. 절 표에 부·절 계층과 위치를 둔다 -------------------------------
 // 지금 section 표에는 부와 절을 가르는 칸이 없다. section_seq가 부 안의 순번인지
 // 문서 전체 순번인지 문서에 명시돼 있지 않다.
-// 그리고 「구조 접근성」 축이 조항의 문서 내 상대 위치를 쓰는데, 산출 단위가 부·절로
-// 확정되면서 계산 방법이 열려 있다(Project-Management/docs/08-m1-decisions.md 2-6절에
-// 선택지 셋). 아래 셋이 있으면 **어느 선택지가 채택돼도 재적재가 필요 없다.**
+// 그리고 "구조 접근성" 축이 조항의 문서 내 상대 위치를 쓰는데 계산 방법이 아직
+// 열려 있다(선택지 셋 — Project-Management 저장소의 docs/08-m1-decisions.md 2-6절).
+// 아래 셋을 먼저 확보해 두면 어느 선택지가 채택돼도 재적재가 필요 없다.
 //
-//   section.part_seq     int   // 부 순번
+//   section.part_seq     int   // 부(部) 단위 순번
 //   section.char_start   int   // 문서(또는 부) 시작 기준 문자 오프셋
 //   section.char_length  int   // 절 길이
-//     // 문서 총 길이는 MAX(char_start + char_length)로 파생한다 — 01의
-//     // 「파생 가능한 값은 칸으로 두지 않는다」 원칙과 같다.
+//     // 문서 총 길이는 MAX(char_start + char_length)로 파생 가능 — 새 칼럼을
+//     // 따로 두지 않는다.
 //
-// --- 제안 4. 재처리 실행을 구분한다 (01 미확인 24) --------------------------
+// --- 제안 4. 재처리 실행을 구분한다 (01 미확인 24 그대로) --------------------
 //   section.extraction_run_id  varchar  // 어느 파서 실행에서 나온 절인가
-//     // 17 실측대로 부·절 분할은 아직 진화 중이다(292/294). 파서를 고쳐 다시 뽑으면
-//     // 절 경계가 달라지는데 지금은 어느 실행 결과인지 구분할 수 없다.
-//     // raw_object.sha256은 「내용이 바뀌었나」는 구분하지만 「같은 내용을 다른 파서로
-//     // 다시 뽑았나」는 구분하지 못한다.
+//     // 17 실측대로 부·절 분할 알고리즘은 아직 진화 중이다(292/294=99.3%, 17).
+//     // 파서를 고쳐 다시 뽑으면 절 경계가 달라지는데, 지금은 어느 실행 결과인지
+//     // 구분할 칸이 없다. raw_object.sha256은 "내용이 바뀌었나"는 구분하지만
+//     // "같은 내용을 다른 파서로 다시 뽑았나"는 구분하지 못한다(01 미확인 24).
 //
-// 넷 다 지금 값을 채울 로직은 필요 없다. 칸만 확보해 두면 된다.
+// 넷 다 지금 값을 채울 로직은 필요 없다 — 칸만 확보해 두면 된다.
