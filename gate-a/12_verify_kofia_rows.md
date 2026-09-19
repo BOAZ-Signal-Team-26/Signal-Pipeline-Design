@@ -29,7 +29,7 @@ Content-Type: text/xml; charset=UTF-8
   <systemHeader></systemHeader>
   <DISFTimeAnnInsDTO>
     <uGb>1</uGb>                  <!-- 1 = 전체(정기+수시). 2·3은 0건 -->
-    <vStrtDt>20260813</vStrtDt>   <!-- 조회기간, 1년 이내 -->
+    <vStrtDt>20260813</vStrtDt>   <!-- 한 번에 1년 미만. 넘기면 오류가 아니라 0행 (15 1-1절) -->
     <vEndDt>20260815</vEndDt>
     <uCdList></uCdList>           <!-- 펀드 지정. 비우면 전체 -->
     <gbOption>S</gbOption>        <!-- S=펀드선택 / N·F=펀드명 -->
