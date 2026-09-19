@@ -1,0 +1,544 @@
+// schema.dbml — 관문 A 논리 스키마 (DBML)
+//
+// 무엇인지: gate-a/01_logical_schema.md에 정의된 표 9개 + ERD를 DBML(dbdiagram.io 문법)로
+//   옮긴 것. 새로 설계한 것은 없다 — 01 문서와 02~06, 12~17 실측 문서에 이미 적힌 사실만
+//   옮겼다. 01의 Mermaid ERD는 문서 렌더링용으로 그대로 두고, 이 파일은 enum·nullable·note를
+//   명시적으로 강제하는 용도다. dbdiagram.io에 그대로 붙여넣으면 렌더링된다.
+// 언제: 작성일 2026-09-20. 01_logical_schema.md 09-20자 내용(product_distributor.snapshot_month
+//   신설, is_etf 2단 판정, 제재/경영유의/분쟁조정 document_product 미생성, 문서표 단일 product_id
+//   FK 제거 등)까지 반영.
+// 물리 설계는 관문 B다: 이 파일에는 인덱스, 파티션, 특정 DB 제품 자료형(jsonb, serial 등)을
+//   넣지 않았다. 타겟 DB 결정 기한은 2026-10-07이며 아직 확정 전이다. 자료형은 전부 논리
+//   수준 일반형(varchar/text/int/date/timestamp/boolean/decimal)만 썼다. 길이는 문서에 실측
+//   근거가 있을 때만 붙였고(예: short_code 5자리), 근거가 없으면 각 칼럼 note에 "미정"이라고
+//   적고 가장 무난한 형(varchar/text)을 썼다. 파일 끝의 "부록" 주석에 그 목록을 모았다.
+
+//////////////////////////////////////////////////////////////////////////////
+// Enum
+//////////////////////////////////////////////////////////////////////////////
+
+Enum product_category_enum {
+  "펀드"
+  "ETF"
+  "ELS"
+}
+
+Enum etf_confidence_enum {
+  KRX_CONFIRMED [note: '1차 판정. KRX ISU_CD 대조로 확정 (13)']
+  NAME_ONLY [note: '2차 판정. "상장지수" 문자열 포함 = 후보 선별용. 누락 0/938이지만 "재현율 100%"로 읽지 않는다 — 붙지 않은 229건의 이름 표기는 미측정 (05 2절)']
+  PENDING [note: '대조 실패, 보류. KRX 1,167건 중 229건 (13). 04에서 CDI 정규화 모집단 제외 대상']
+}
+
+Enum distributor_type_enum {
+  "운용사"
+  "판매사"
+  "미상"
+}
+
+Enum document_type_enum {
+  "투자설명서"
+  "간이투자설명서" [note: '09-20 정정(17): DART에서는 별도 raw_object가 아니라 본문 PDF 안의 절(요약 정보)로 존재. document_type 값으로 실제로 별도 문서 행이 생기는 경우가 있는지는 재검토 필요']
+  "일괄신고서"
+  "효력발생안내"
+  "제재공시"
+  "분쟁조정결정문"
+  "금투협 수시공시" [note: '00b 반영, 신설. 공고 1건 = 문서 1건(클래스 단위 아님)']
+  "경영유의공시" [note: '후보. 채택 미정 (14 6절) — 제재공시와 같은 번호 공간을 쓰는지도 미실측']
+}
+
+Enum body_format_enum {
+  pdf
+  hwp5
+  hwp3
+  hwp_dist
+  xml_only
+}
+
+Enum match_method_enum {
+  code
+  string
+  manual
+}
+
+Enum score_type_enum {
+  CDI [note: '펀드·ETF에만 행이 존재. ELS에는 이 유형의 행 자체가 없음']
+  "고지충실도" [note: 'ELS 대상으로 확정. 펀드·ETF에도 병행 적용되는지는 미확인 (04 2절)']
+}
+
+Enum failure_reason_enum {
+  PENDING_MASTER [note: '매칭 대상 마스터 미도착. 정상 대기 상태(DART가 금투협·공공데이터포털보다 6~18일 선행). 30일 재시도']
+  AMBIGUOUS [note: '다중 후보 동점, 또는 코드 없는 소스에서 자동 확정 조건(05 6절) 미충족. 수동 큐']
+  NO_CANDIDATE [note: '후보 자체가 없음(신규상품·상장폐지 등). 주 1회 재시도']
+  NO_CODE_IN_SOURCE [note: '분쟁조정·제재공시처럼 소스 구조상 코드·상품명이 영원히 없음. 재시도 대상 아님(구조적)']
+  BELOW_THRESHOLD [note: '유사도 최소 문턱 미만(상품명 0.60, 판매사명 0.95 또는 단독후보/교차확인 미충족). 재시도 대상 아님']
+  NORMALIZE_FAILED [note: '원문이 파싱 단계에서 깨져 정규화 자체 불가. 03 본문 추출 실패와 연계']
+}
+
+Enum match_failure_status_enum {
+  "미해결"
+  "수동확인중"
+  "보류"
+}
+
+Enum file_role_enum {
+  cover_xml [note: 'DART document.xml 표지·정정요약·PDF 링크']
+  body_pdf [note: 'DART download.do 본문 PDF']
+  api_response
+  attachment
+  prospectus [note: '금투협 첨부. 투자설명서 (12 반영)']
+  prospectus_simple [note: '금투협 첨부. 간이투자설명서 (12 반영)']
+  change_summary [note: '금투협 첨부. 변경대비표·규약 (12 반영)']
+}
+
+Enum collect_status_enum {
+  success
+  failed
+  permanent_failed
+
+  // 03 원문이 "success / failed / permanent_failed 등"으로 적어 "등"이 있다.
+  // 이 셋 외 값이 실제로 쓰이는지는 미확인 — 부록 참고.
+}
+
+Enum raw_extract_status_enum {
+  EXTRACT_UNSUPPORTED_FORMAT [note: 'HWP 3.0. 분쟁조정 첨부 94건 실측. 자동 재시도 제외']
+  EXTRACT_PARTIAL [note: '배포용 HWP(암호화), 7건. PrvText로 약 1,022자 부분 복구. 자동 재시도 제외']
+  OCR_CANDIDATE [note: 'BMP 내장 4건. 보조 플래그. 재시도 대상']
+  EXTRACT_NOT_APPLICABLE [note: 'DART document.xml처럼 본문이 원래 없는 파일. 실패 아님']
+
+  // "성공" 리터럴이 03 어디에도 정의돼 있지 않다 — 부록 참고.
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// Tables
+//////////////////////////////////////////////////////////////////////////////
+
+Table product {
+  product_id int [pk, note: '내부 발급 서러게이트 키. 구체 자료형(int/bigint 등)·생성 방식은 관문 B 사안']
+  short_code varchar(5) [not null, note: '단축코드 5자리 영숫자([A-Z0-9]{5}). DART 표지 펀드코드 = 공공데이터포털 srtnCd(J1,J2). 펀드·ETF 1차 조인 키. 전역 유일 아님(전체 165,118종 중 4,899종=3.0% 중복) — 2015년 이후 설정분·상장지수 1,435건 범위에서는 안전. 겹치면 (asoStdCd 앞 6자리, short_code) 조합으로 확장(14)']
+  kofia_fund_code varchar(12) [note: '금투협 펀드코드 12자리 = K55+운용사3+단축5+검증1. 조인 키로는 J7(금투협 수시공시)에서만 쓰임']
+  standard_code varchar(12) [note: '협회표준코드(KR5.../KRM...). 공공데이터포털 asoStdCd. kofia_fund_code와 체계가 다름']
+  isu_cd varchar [note: '거래소 종목코드. ETF에만 값 존재(그 외 NULL). short_code와 잇는 코드성 수단이 없어 이름으로만 연결되고 완전일치 0.0%/포함매칭 80.4%(13, 미확인 2). 길이·형식은 문서에 근거 없어 미정']
+  fin_prdt_cd varchar [note: 'finlife 상품코드. J9로 확인됨 — finlife 오픈API 8종에 펀드·ETF·ELS 자체가 없어 조인 키로 성립하지 않는다. 소스 존치 여부 미정(09-16 안건). 길이·형식도 미정']
+  product_name text [not null, note: '상품명 원문. 원천 필드가 어느 소스의 어느 칼럼인지는 미확인']
+  product_name_normalized text [note: '05 1절 4단계 정규화(NFKC→공백 제거→(주)/주식회사 제거→유형괄호·호수·클래스 분리) 결과']
+  product_category product_category_enum [not null]
+  is_etf boolean [not null, note: '파생 계산 칼럼이 아니라 2단 판정 결과(13) — etf_confidence와 함께 해석']
+  etf_confidence etf_confidence_enum [not null, note: '13 반영, 신설']
+  fund_key varchar [note: '클래스 표기를 뺀 본체명+manager_id로 만드는 펀드(종류형 모) 단위 파생키. 04의 CDI 정규화 모집단·최소표본 30건 판정이 이 그룹핑에 의존한다. 매번 재계산하는 파생값인지 고정 서러게이트인지 미정 — 관문 B(SCD2 물리화) 이전에 반드시 정해야 함(미확인 23). 길이도 미정']
+  risk_grade int [note: '1~6, 1이 최고위험. DART 투자설명서 표지 "N등급[문구]"에서 정규식(\\d)등급으로 추출. corp_code 조인이 아니라 문서→상품 경로로 채움. 위험등급 원천이 DART 하나만은 아닐 수 있음(금투협 첨부 PDF 본문에도 표기 확인, 16 3절, 미확인 22) — 04 3-2절 내생성 논증의 전제이므로 재검토 대상']
+  manager_id int [ref: > distributor.distributor_id, not null, note: '운용사만. 판매사는 상품 표에 두지 않고 product_distributor N:M으로 분리']
+  sale_start_date date [note: '판매시작일 후보=공공데이터포털 setpDt(설정일). 결측 0.00%(183,649건 전건)지만 "11111111" 등 더미 5건 있어 연도 범위 검증 필요(14)']
+  sale_end_date date [note: 'NULL 허용. NULL이면 "판매 중"(06). 판매종료일 소스 자체가 아직 없다(미확인 8) — 상장폐지된 ETF가 마스터에 잔존(오탐 435건 중 2015년 이전 설정 110건)해 전수 범위를 오염시킬 수 있다. ETF 한정 대용 신호(전일 ISU_CD가 금일 KRX 응답에 없으면 상장폐지) 채택 여부는 관문 B 사안']
+  fund_type varchar [note: '공공데이터포털 fndTp. 04에서 위험등급의 보조 층화축 후보로만 확보. 코드 형식·길이 미정']
+  product_class_code varchar [note: '공공데이터포털 prdClsfCd. 코드 형식·길이 미정']
+  is_public_offering boolean [note: '공모/사모. 필터는 적재 단계에서 적용하고 원본은 구분 없이 전량 보관(00b A8)']
+  valid_from date [note: 'SCD2 예비 칸(00b 반영, 신설). 물리화 여부는 관문 B 사안 — 지금은 이력을 두지 않으면 변경 이력이 영구 소실된다는 문제만 인지된 상태']
+  valid_to date [note: 'SCD2 예비 칸. valid_from과 동일 사유']
+
+  Note: '''
+  단위 = 클래스(단축코드 5자리 하나 = 한 행). short_code·srtnCd가 모두 클래스 입자라
+  펀드 단위로 잡으면 1차 조인 키가 유일하지 않게 된다(아키텍트 확정, 09-16).
+  자연키 = short_code(전역 유일은 아님 — 위 note 참고). fund_key로 클래스를 펀드 단위로
+  묶어 04의 CDI 정규화 모집단·최소표본 30건 판정에 쓴다.
+  ELS 식별 키는 아직 없다(미확인 13) — ELS 전용 칼럼을 추가하지 않았다. 함정: is_etf·
+  etf_confidence를 문자열 규칙 하나로 판정하면 오탐이 14~30%다.
+  '''
+}
+
+Table distributor {
+  distributor_id int [pk, note: '내부 발급 서러게이트 키']
+  corp_code varchar [note: 'DART 법인 고유번호(공시 제출 법인=운용사). 원래 상품 표에 있던 것을 이관(문서→상품 경로로 위험등급을 채우기 위한 결정과 연동). document.corp_code와 값 체계가 같아 보이나 이 문서 어디에도 FK로 명시돼 있지 않아 관계선을 긋지 않았다(01 ERD "그림에 넣지 않은 것" #1). 길이 미정']
+  kofia_mgmt_code varchar(3) [note: '금투협 운용사 코드 3자리 영숫자(예: 105=삼성자산운용, 301=미래에셋자산운용). 대응표 536건 = reference/kofia_mgmt_codes.csv']
+  distributor_name text [not null, note: '원문명']
+  distributor_name_normalized text [note: '05 9절 5단계 법인명 정규화(NFKC→구상호 치환→법인격 표기 제거→공백 제거→지점 표기 제거) 결과. 상품명용 1절 규칙을 쓰지 않는다 — 법인명에는 클래스 표기가 없고 대신 상호 변경이 있다']
+  distributor_type distributor_type_enum [not null]
+
+  Note: '''
+  운용사·판매사·미상을 한 표에 두고 distributor_type으로 구분한다. 법인 실체는 같은
+  종류라 표를 나눌 이유가 없지만, 상품과의 관계는 단일 FK로 담을 수 없어 아래
+  product_distributor N:M 브릿지로 뺐다.
+  함정: 운용사 536건 중 97건(18%)이 구상호를 갖고 그중 44건은 업종 접미사까지 바뀐다
+  ("누림투자자문"→"누림자산운용") — 유사도만으로는 못 잇는다(05 9절).
+  미확인: corp_code ↔ kofia_mgmt_code 대응(문자열 매칭 1회 고정 필요, 536건 규모).
+  '''
+}
+
+Table product_distributor {
+  product_id int [ref: > product.product_id, not null]
+  distributor_id int [ref: > distributor.distributor_id, not null]
+  snapshot_month varchar(6) [not null, note: 'YYYYMM. 09-20 신설. 이 칸 없이 (product_id, distributor_id)로 upsert하면 매달 과거 판매 관계를 소리 없이 덮어쓴다']
+  source_document_id int [ref: > document.document_id, note: '이 연결을 알려준 문서. 확정된 현재 경로(금투협 전자공시 "판매사별 펀드보수비용" 코드 조회, J8)에서는 명단이 문서가 아니라 별도 API 조회에서 오므로 항상 NULL이다(14). 문서 경로가 추가되면 NULL 허용 여부를 재검토']
+
+  indexes {
+    (product_id, distributor_id, snapshot_month) [pk]
+  }
+
+  Note: '''
+  자연키 = (product_id, distributor_id, snapshot_month) — snapshot_month가 없던 시절에는
+  (product_id, distributor_id)만으로 upsert해 이력이 유실될 뻔했다.
+  상품:판매사 N:M. 상품 표의 단일 distributor_id는 없애고 운용사만 product.manager_id로 남겼다.
+  함정: ETF는 이 소스에 0건이라 판매사를 붙일 수 없다(14) — ETF 상품은 이 표에 사실상
+  등장하지 않는다. 규모 추정: 판매사 200곳 × 평균 3,000건 ≈ 월 60만 행.
+  '''
+}
+
+Table document {
+  document_id int [pk, note: '내부 발급 서러게이트 키']
+  source_doc_key varchar [not null, unique, note: '소스 공통 자연키. DART=rcept_no, 금투협 수시공시=(companyCd,standardDt,announceTtl,tmpV1) 해시 — tmpV1을 빼면 삼성 2026-08-13 "투자설명서 변경" 한 묶음에 서로 다른 펀드 72종 234행이 뭉갠다(12, 확인됨), 제재공시=(소스,emOpenNo) — 경영유의공시와 번호공간을 공유하는지 미실측, 분쟁조정=게시글 번호. 소스마다 체계가 달라 통일된 길이·형식이 없어 미정']
+  rcept_no varchar [note: 'DART 접수번호. DART 전용 칸(00b 반영) — 그 외 소스는 NULL. 자릿수는 문서에 근거 없어 미정']
+  dcm_no varchar [note: 'DART 문서번호. download.do?dcmNo=로 본문 PDF를 받을 때 필요. DART 전용 칸. 길이 미정']
+  corp_code varchar [note: 'DART 법인코드(제출 법인=운용사). distributor.corp_code와 값 체계가 같아 보이나 FK로 명시된 바 없어 관계선을 긋지 않았다(01 ERD "그림에 넣지 않은 것" #1). 길이 미정']
+  document_type document_type_enum [not null]
+  report_name text [note: 'DART 보고서명 원문(예: "[기재정정] 투자설명서"). document_type은 이 값에서 파생']
+  pblntf_detail_ty varchar(4) [note: 'DART 세부유형 코드 G001/G002/G003. 수집 필터는 이 코드로, 문서 종류 판별은 report_name으로 — 둘을 섞으면 누락 발생(A2)']
+  body_format body_format_enum [note: '03의 파싱 판정에 사용']
+  distributor_id int [ref: > distributor.distributor_id, note: '상품 연결이 없는 문서(분쟁조정·제재공시 등)를 판매사 축에 붙이기 위한 칼럼. nullable. 분쟁조정은 판매사명도 마스킹이라 이 값조차 못 채운다 — "문서 표에만 존재하는 미연결 레코드"가 정상 상태다(14, 미확인 4)']
+  is_correction boolean [not null, note: '정정본 여부. 판정 근거 = 정정신고 노드의 "최초제출일" 존재 여부(00b 반영) — report_name의 "[기재정정]" 접두어가 아니다. 접두어는 "[발행조건확정]" 등 변형이 있어 문자열 매칭만으로는 정정본을 놓친다']
+  lineage_id int [ref: > document.document_id, not null, note: '자기참조(self-FK). 같은 사건의 최초 문서 id. 최초 문서는 자기 자신을 가리킨다. 판정 근거는 DART 구조(정정신고 노드) 전용이며, 금투협 문서의 정정본 판정 규칙은 아직 없다(미확인 25) — 칸만 확보하고 로직은 넣지 않는다']
+  version_no int [note: '파생 칼럼(00b 반영, 신설). lineage 안에서 received_date 순번']
+  is_current boolean [note: '파생 칼럼(00b 반영, 신설). 물리 칼럼으로 둘지는 관문 B 이력 설계에서 결정']
+  initial_submit_date date [note: '정정본이면 정정신고 요소에 적힌 최초제출일. 원본이면 received_date와 같다']
+  received_date date [not null, note: '접수일자']
+  parse_status varchar [note: '문서 단위 파싱 성공/실패 플래그. 정의="하위 원본파일(raw_object) extract_status의 집계값"(00b 반영)이지만, 집계 결과 값의 도메인(예: 성공/부분성공/실패)이 01·03 어디에도 명시돼 있지 않다 — 부록 참고. 임시로 varchar, 값 목록 미정']
+
+  Note: '''
+  단위 = "수집한 원천 문서 1건"(00b A1). DART는 접수번호 단위, 금투협 수시공시는 공고
+  1건 단위(클래스 단위 아님), 제재공시는 제재정보번호 단위, 분쟁조정은 게시글 번호 단위.
+  자연키 = source_doc_key.
+  함정: 분쟁조정·제재공시·경영유의공시는 의도적으로 document_product 브릿지 행을 만들지
+  않는다 — 응답에 상품을 가리키는 칸이 없거나(제재) 상품명이 마스킹(분쟁조정)이라
+  매칭을 시도하면 실패 로그만 쌓이고 통계가 오염된다(05 NO_CODE_IN_SOURCE). 매칭
+  모듈은 이 document_type들을 매칭 대상에서 제외해야 한다.
+  DART 투자설명서 한 건은 raw_object가 2개(cover_xml + body_pdf)다. 간이투자설명서는
+  DART에서 별도 첨부가 아니라 본문 PDF 안의 절이다(09-20 정정, 17) — document_type
+  값으로서의 실제 사용 여부는 재검토 대상.
+  '''
+}
+
+Table document_product {
+  document_id int [ref: > document.document_id, not null]
+  product_id int [ref: > product.product_id, not null]
+  match_method match_method_enum [not null, note: '01 상품 표의 3단 계단식(1차 코드 → 2차 정규화 펀드명 → 3차 운용사명+설정일) 중 어느 단에서 붙었는지']
+  match_score decimal [note: '매칭 점수. 코드 매칭이면 1.0, 문자열 매칭이면 유사도. precision/scale은 문서에 근거 없어 미정']
+  matched_at timestamp [not null]
+
+  indexes {
+    (document_id, product_id) [pk]
+  }
+
+  Note: '''
+  문서 1건이 상품(클래스) 여러 건을 가리키는 1:N 브릿지. 이 1:N은 수시공시(uRptGb=O,
+  tsCd 2OF…)에서만 실측됐다 — 표본 평균 3.02행/묶음. 정기공시(2RF…)는 평균 1.08행으로
+  사실상 1:1(12).
+  함정: 분쟁조정·제재공시·경영유의공시는 이 표에 행을 만들지 않는다(위 document 표 note
+  참고). ELS의 매칭 키 자체가 미정이라(미확인 13) ELS 행이 어떤 키로 이 표에 들어오는지
+  규칙이 없다.
+  '''
+}
+
+Table section {
+  section_id int [pk, note: '내부 발급 서러게이트 키']
+  document_id int [ref: > document.document_id, not null]
+  section_seq int [not null, note: '문서 내 부·절 순번']
+  section_title text
+  section_text text [note: '정규화된 본문 텍스트. 추출 실패 시 원문 그대로(정규화 이전 상태)를 두고 extract_status만 실패로 표시한다(03) — 즉 실패해도 이 칼럼이 비지는 않는다']
+  extract_status varchar [note: '본문 추출 성공/실패 플래그. 판정 기준(텍스트 500자 미만, 깨진 문자 30% 초과, 형식 미지원)은 03을 따른다. 다만 raw_object.extract_status처럼 구체 리터럴 값 집합이 01·03에 정의돼 있지 않다 — 단순 성공/실패 두 값인지, raw_object와 같은 세분 코드(EXTRACT_PARTIAL 등)를 공유하는지 미정. 부록 참고']
+
+  Note: '''
+  점수를 절 단위로 저장하기 위한 전제 표(드릴다운: 문서 단위가 아니라 절 단위 점수).
+  함정: 재처리(파서 버전) 개념이 없다(09-20 신설, 미확인 24) — (document_id, section_seq)
+  만으로는 어느 실행에서 나온 절인지 구분하지 못한다. 부·절 분할 알고리즘이 아직
+  진화 중이라(17: 161/163) 같은 원본을 개선된 파서로 다시 뽑으면 절 경계가 달라질 수
+  있는데, 재추출 시 덮어쓸지 쌓을지가 물리 설계에서 반드시 막혀야 한다.
+  '''
+}
+
+Table score {
+  score_id int [pk, note: '내부 발급 서러게이트 키']
+  section_id int [ref: > section.section_id, not null, note: '절 → 문서 경로로 계산에 쓰인 문서 버전이 자동으로 정해진다 — 점수 표에 별도 버전 칼럼을 두지 않는다']
+  score_type score_type_enum [not null]
+  raw_score decimal [not null, note: '원점수. precision/scale 미정']
+  normalized_score decimal [note: '비교 모집단 안에서의 정규화 값(백분위 등). 모집단 미달 층(층당 30건 미만, 잠정값)이면 NULL(04 4절). etf_confidence=PENDING인 상품도 정규화 모집단에서 제외되어 이 값이 NULL이다(04)']
+  comparison_population_key varchar [note: '채점 시점의 모집단 키 스냅숏. 정의="상품군 × 위험등급"(04 확정)이지만 실제 저장 포맷(예: 구분자, 인코딩 방식)은 문서에 근거가 없어 미정']
+  baseline_date date [not null, note: '채점기준일. "판매 중" 판정과 전수 범위를 정하는 스냅숏 날짜(06)']
+  section_weight decimal [note: '문서 점수 집계용 가중치 후보. 현재 항상 비워 둔다 — 집계 공식은 관문 C 사안']
+  score_payload text [note: '관문 C에서 잠글 "CDI 출력" 데이터 계약이 들어갈 자리. 모양은 지금 정하지 않는다. 물리 자료형(json/jsonb 등)도 관문 B 사안이라 우선 text로 둔다']
+  scored_at timestamp [not null]
+
+  Note: '''
+  score_type 칼럼으로 CDI와 고지충실도를 한 표(long format) 안에서 구분한다 — 표를
+  둘로 쪼개지 않는다. ELS 행에는 CDI 레코드 자체가 존재하지 않는 방식으로 결측을
+  "행의 부재"로 표현한다(04).
+  문서 단위 점수 표는 없다 — 절 점수의 집계 뷰로 파생한다(04 1절). 집계 공식은 관문 C 사안.
+  함정: 재처리(채점 로직/CDI 산식 버전) 개념이 없다(미확인 24) — 같은 절을 다른 산식으로
+  재채점할 때 덮어쓸지 쌓을지 미정.
+  '''
+}
+
+Table match_failure {
+  failure_id int [pk, note: '내부 발급 서러게이트 키']
+  source varchar [not null, note: '실패가 발생한 소스']
+  attempted_key_value text [not null, note: '매칭을 시도한 키값. 코드 매칭 실패 시 코드, 문자열 매칭 실패 시 원문 상품명']
+  normalized_value text [note: '05 1절 4단계 정규화를 거친 문자열. 코드 매칭이면 NULL']
+  top1_candidate_product_id int [ref: > product.product_id, note: '유사도가 가장 높았던 상품. 없으면 NULL. 후보일 뿐 실제 매칭이 아니다']
+  top1_similarity decimal [note: '그 후보의 유사도 점수. precision/scale 미정']
+  failure_reason_code failure_reason_enum [not null]
+  attempted_at timestamp [not null]
+  status match_failure_status_enum [not null]
+  related_document_id int [ref: > document.document_id, note: '있으면 연결. nullable']
+
+  Note: '''
+  매칭 실패를 건수 집계가 아니라 행 단위로 남긴다 — 문자열 조인 실패가 ETF·특정
+  판매사에 몰려 표본이 기우는지, 위험등급 결측으로 잔차 회귀에서 통째로 버려지는
+  상품군이 있는지 사후 검증하기 위함(04 3-3절).
+  임계치(05, 잠정값): 상품명 유사도 0.85 이상 자동매칭 / 0.60~0.85 수동확인 대상 /
+  0.60 미만 실패. 판매사명은 별도 0.95 이상. 숫자 토큰(호수 제외)은 완전 일치 강제.
+  라벨 200건으로 최종 확정 예정.
+  '''
+}
+
+Table raw_object {
+  raw_object_id int [pk, note: '내부 발급 서러게이트 키']
+  document_id int [ref: > document.document_id, not null]
+  file_role file_role_enum [not null, note: 'CDI 채점 대상을 가리는 유일한 칸 — 금투협은 문서 1건(공고)에 첨부가 2~3종이고 document_type이 "금투협 수시공시" 한 값이므로, 이 칸이 없으면 어느 파일을 채점할지 정할 자리가 없다']
+  sha256 varchar(64) [not null, note: '파일 콘텐츠 해시(hex 다이제스트, 64자). 02의 재수집 시 버전 증가 여부·중복 저장 판정 키. 소스를 가로질러 같은 파일을 식별하는 유일한 수단이기도 하다 — source_doc_key는 소스별로 체계가 달라 소스 간 중복(간이투자설명서가 금투협·DART 양쪽에서 옴)을 자연키로는 못 잡는다(12)']
+  storage_path text [not null, note: '02_raw_storage_policy.md의 raw/{source}/{collected_date}/{source_doc_key}__v{n}.{ext} 규칙']
+  blob_path text [note: '관문 B 후보 칸(09-16 아키텍트 반영). CAS(blobs/{sha256 앞 2자}/{sha256}) 채택이 관문 B로 미뤄져 현재는 쓰지 않는다']
+  file_name text [not null, note: '원본 파일명(서버 저장명 포함)']
+  content_type varchar [note: 'MIME 타입. 길이 미정']
+  collected_at timestamp [not null, note: '수집 시각(요청을 보낸 시각)']
+  request_params text [not null, note: '요청에 사용한 파라미터 전체. 저장 구조(키-값 나열 방식)가 문서에 없어 형태 미정 — DB 종속 자료형(json/jsonb)은 물리 설계 사안이라 배제하고 text로 둔다']
+  response_code varchar [note: '응답 코드(HTTP 상태 등). "등"이라는 표현으로 보아 HTTP 상태코드만은 아닐 수 있어 varchar로 둠. 길이 미정']
+  collect_status collect_status_enum [not null, note: '03의 수집 실패 판정과 연동. 원문이 "success/failed/permanent_failed 등"이라 적어 이 셋이 닫힌 목록인지 확실하지 않다 — 부록 참고']
+  extract_status raw_extract_status_enum [note: '03의 본문 추출 실패 판정과 연동. "성공" 리터럴이 문서에 정의돼 있지 않다 — 부록 참고']
+
+  Note: '''
+  단위 = "원본파일 1건"(00b 반영, 구 수집_이력) — 사건(문서) 1건에 첨부가 여러 개
+  붙으므로 수집·추출 성공/실패는 문서 단위가 아니라 파일 단위로 판정한다.
+  DART 투자설명서 한 건은 이 표에 2행(cover_xml, body_pdf)을 만든다. 금투협 수시공시
+  한 건은 2~3행(prospectus / prospectus_simple / change_summary)을 만든다.
+  함정: 금투협은 클래스 행 N개가 같은 파일 집합을 가리킨다 — 중복 판정은 fileNm으로
+  다운로드 전에 끝내고 sha256은 받은 뒤 검증용으로만 기록한다(12).
+  '''
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// Relationships — 01의 Mermaid ERD와 동일. 새로 그은 선은 없다.
+// (그림에 넣지 않은 것 5건도 여기서 그대로 안 그었다 — 아래 부록 참고)
+//////////////////////////////////////////////////////////////////////////////
+
+// product_id, distributor_id 등 inline `ref: >`로 이미 선언된 관계 외에
+// 자기참조·복합키 관계는 위 각 테이블 컬럼 선언에 인라인으로 포함했다:
+//   distributor.distributor_id → product.manager_id
+//   product.product_id / distributor.distributor_id → product_distributor
+//   document.document_id → product_distributor.source_document_id (nullable)
+//   document.document_id / product.product_id → document_product
+//   document.document_id → section.document_id
+//   section.section_id → score.section_id
+//   document.document_id → raw_object.document_id
+//   document.document_id → document.lineage_id (self, 자기참조)
+//   distributor.distributor_id → document.distributor_id (nullable)
+//   document.document_id → match_failure.related_document_id (nullable)
+//   product.product_id → match_failure.top1_candidate_product_id (nullable)
+
+//////////////////////////////////////////////////////////////////////////////
+// 부록 — DBML로 옮기면서 "문서에 근거가 없어서" 못 채운 칸 (지어내지 않고 비워 둔 것)
+//////////////////////////////////////////////////////////////////////////////
+//
+// 자료형·길이
+// 1. 모든 서러게이트 PK(product_id 등)의 구체 자료형(int/bigint/uuid)과 생성 방식
+//    (auto-increment/UUID) — "내부 발급"이라고만 적혀 있고 방식은 관문 B 사안.
+// 2. corp_code(distributor, document), rcept_no, dcm_no, isu_cd, fin_prdt_cd,
+//    fund_type, product_class_code, content_type, response_code, comparison_population_key,
+//    fund_key, source_doc_key — 길이·형식 근거가 문서에 없어 varchar/text로만 두고
+//    구체 길이를 지정하지 않았다.
+// 3. match_score, top1_similarity, raw_score, normalized_score, section_weight의
+//    precision/scale — 몇 자리 소수인지 문서에 없다.
+// 4. score_payload, product_distributor.source_document_id 등 향후 JSON류가 필요할
+//    가능성이 있는 칸도 물리 자료형(jsonb 등)은 정하지 않고 text로 두었다 — 그 자체가
+//    타겟 DB 미정 제약 때문이다.
+//
+// enum 값 집합이 불완전하거나 리터럴이 문서에 없는 것
+// 5. document.parse_status — "하위 raw_object.extract_status의 집계값"이라는 정의만
+//    있고, 집계 결과가 갖는 값의 도메인(성공/부분성공/실패 등)이 01·03 어디에도 없다.
+//    enum으로 강제하지 못하고 varchar로 남겼다.
+// 6. section.extract_status — "성공/실패 플래그"라고만 적혀 있고, raw_object처럼
+//    세분화된 리터럴(EXTRACT_PARTIAL 등)을 공유하는지, 아니면 단순 boolean 두 값인지
+//    문서에 없다. varchar로 남겼다.
+// 7. raw_object.extract_status — 03이 정의한 리터럴은 EXTRACT_UNSUPPORTED_FORMAT /
+//    EXTRACT_PARTIAL / OCR_CANDIDATE / EXTRACT_NOT_APPLICABLE 넷뿐이고, "추출 성공"을
+//    가리키는 리터럴 이름이 어디에도 없다. enum에 성공 값을 추가하지 않았다 — 지어내면
+//    안 되는 항목이라고 판단했다.
+// 8. raw_object.collect_status — 03 원문이 "success / failed / permanent_failed 등"
+//    이라 적어 "등"이 붙는다. 이 셋 외에 실제 값이 있는지 확인되지 않았다. enum을
+//    이 셋으로 닫았지만, 닫힌 목록이라는 보장은 없다.
+// 9. document.document_type의 "경영유의공시"는 14 6절에서 후보로만 언급되고
+//    "채택 미정"이라고 명시돼 있다. enum에는 넣되 note로 미채택임을 표시했다 —
+//    빼는 것도 넣는 것도 임의 결정이라, 문서에 있는 그대로(후보 상태 포함) 옮겼다.
+//
+// 스키마에 아예 칼럼/관계를 추가하지 않은 것 (추가하면 지어내는 것이 되어 보류)
+// 10. is_feeder(모/자 구분), ELS 회차 번호 등 05가 언급한 매칭용 파생 필드 — 이들은
+//     "가칭"이며 매칭 로직 내부에서 쓰는 임시 필드로 보이고, 01의 표 9개 칼럼 목록
+//     어디에도 영구 칼럼으로 명시되지 않았다. 테이블에 넣지 않았다.
+// 11. ELS 전용 식별 키 칼럼 — 후보(발행사 회차 번호 / KR6… 표준코드 / 일괄신고추가서류
+//     단위)만 있고 확정이 없다(미확인 13). product 표에 새 칼럼을 만들지 않았다.
+// 12. 절/점수 표의 "재처리 실행 버전" 칼럼 — 미확인 24가 문제를 정확히 짚었지만
+//     칼럼명·자료형 후보가 전혀 제시돼 있지 않다. 임의로 run_id 같은 칼럼을 지어내지
+//     않고 각 표의 Note에 미해결 문제로만 남겼다.
+// 13. document.corp_code ↔ distributor.corp_code 사이의 Ref(FK) — 01 ERD가 "그림에
+//     넣지 않은 것 #1"로 명시적으로 뺀 관계다. 값 체계는 같아 보이지만 FK로 선언한
+//     근거가 없어 이 DBML에서도 긋지 않았다.
+// 14. distributor.kofia_mgmt_code ↔ distributor.corp_code 사이의 대응 — 같은 표
+//     안이지만 대응 규칙이 미확인이라(문자열 매칭 1회 고정 필요) 어떤 형태의 관계로도
+//     표현하지 않았다.
+// 15. 국가법령정보(MST, JO) — 9개 표 어디에도 대응 엔티티가 없다(01 미확인 3, J13).
+//     조인인지 텍스트 참조인지부터 미정이라 테이블/칼럼을 만들지 않았다.
+// 16. product.isu_cd ↔ KRX API 사이의 Ref — 연결 수단이 코드가 아니라 이름이라
+//     FK로 표현할 수 있는 관계가 아니다(J10, 확인된 사실). Ref를 긋지 않았다.
+//
+// 이 목록 자체가 산출물이다 — Mermaid ERD를 그릴 때도 "그림에 넣지 않은 것" 5건 중
+// 2건(#1 corp_code 관계, #3 ELS 매칭 키)이 설계 구멍으로 이어졌다. 위 16개 항목 중
+// 특히 5·6·7(상태값 도메인 미정)과 10·12(칼럼 자체가 없음)는 관문 B 물리 설계 전에
+// 결정 주체를 정해야 한다.
+
+//////////////////////////////////////////////////////////////////////////////
+// 제안 (미확정) — data-scientist, 09-20
+//////////////////////////////////////////////////////////////////////////////
+//
+// 이 저장소의 표기 규칙: 결정(작성자가 정한 것) → 관문 미팅에서 4인 확정 → (사실).
+// 아래는 아직 "제안" 단계이며 gate-a/01_logical_schema.md에 반영되지 않았다. 위
+// 본문(표 9개·enum·부록)은 01에 있는 확정/결정 사항만 옮긴 것이고, 이 블록은 섞지
+// 않기 위해 통째로 블록 주석(/* */)으로 감싸 dbdiagram에 렌더되지 않게 했다 —
+// 캔버스에 붙이면 확정본 9개 표만 보인다. 01이 반영되고 관문에서 확정되면 이 블록의
+// 주석을 벗기고 본문으로 옮긴다.
+//
+// axis를 enum이 아니라 별도 lookup 표로 두자는 제안의 근거: CDI 4축 변수표가
+// 09-23에 나올 예정이라, 지금 enum으로 축 값을 굳히면 변수표가 나올 때마다 enum을
+// 늘리는 스키마 변경(마이그레이션)이 필요해진다. lookup 표로 두면 행 추가만으로
+// 확장된다.
+//
+/*
+// -- 1) score 표에 추가될 제안 칼럼 (기존 score 표를 대체하는 것이 아니라 덧붙이는 안) --
+// Table score (제안 추가분만 표기, 기존 칼럼은 위 확정본 참고):
+//   axis_id            int     [ref: > axis.axis_id, note: 'nullable. CDI 4축을 축별로 저장하는 제안(축 변수표는 09-23 예정). 고지충실도가 축 구조인지 미확인이라 nullable']
+//   normalized_score   decimal [note: '축 단위 정규화값(제안). 기존 score.normalized_score(비교 모집단 단위, 04 확정)와 이름이 같아 실제 반영 시 개명 검토 필요']
+//   population_snapshot_id int [ref: > population_snapshot.population_snapshot_id, note: '기존 comparison_population_key(문자열, 04 확정)를 FK로 대체하자는 제안']
+//   scoring_formula_version varchar [note: '채점 공식(CDI 산식)이 관문 C까지 계속 바뀌므로 버전 식별자가 필요하다는 제안. 01 미확인 24(재처리 버전 없음)와 같은 문제의식']
+//
+// -- 2) 신설 제안 표: population_snapshot (층별 분포를 매번 재계산하지 않기 위함) --
+// Table population_snapshot {
+//   population_snapshot_id int [pk]
+//   baseline_date date
+//   product_category product_category_enum
+//   risk_grade int [note: 'nullable']
+//   fund_type varchar [note: 'nullable. 04 3-2절 (b)안 — 층화 축 대체 후보']
+//   product_class_code varchar [note: 'nullable. 층화 축 대체 후보']
+//   stratification_axis_choice varchar [note: '이 스냅숏이 실제로 쓴 층화 축(위험등급 vs fndTp 등) 기록']
+//   n int
+//   mean decimal
+//   sd decimal
+//   p10 decimal
+//   p25 decimal
+//   p50 decimal
+//   p75 decimal
+//   p90 decimal
+//   excluded_pending_etf_count int [note: 'etf_confidence=PENDING 제외 건수(04)']
+//   below_min_threshold_flag boolean [note: '층당 30건(잠정, 04 4절) 미달 여부']
+//   computed_at timestamp
+// }
+//
+// -- 3) 신설 제안 소표: axis --
+// Table axis {
+//   axis_id int [pk]
+//   axis_code varchar
+//   axis_name varchar
+//   effective_from date
+// }
+//
+// -- 4) section 표에 추가될 제안 칼럼 --
+// Table section (제안 추가분만 표기, 기존 칼럼은 위 확정본 참고):
+//   part_seq          int [note: '부(部) 단위 순번(제안). 현재 section_seq가 부 안의 순번인지 문서 전체 순번인지 불명확한 문제 — 절 표에 부·절 계층이 아직 없다']
+//   char_start        int [note: '구조 접근성 축(조항의 문서 내 상대 위치, Project-Management 08-m1-decisions 2-6절 선택지 3안 관련) 계산 방법이 열려 있어, 방법이 확정돼도 재적재가 필요 없도록 먼저 확보하자는 제안']
+//   char_length       int [note: '위와 동일 사유']
+//   extraction_run_id int [note: '01 미확인 24(재처리 버전 없음) 그대로 — 절 표 재처리 시 실행 구분용']
+*/
+
+//////////////////////////////////////////////////////////////////////////////
+// 제안 (미확정) — 아직 01에 반영되지 않았다
+//////////////////////////////////////////////////////////////////////////////
+//
+// 아래는 09-20에 data-scientist 검토에서 나온 칼럼 제안이다. 이 저장소의 표기 규칙상
+// 「결정」은 관문 미팅에서 4인이 확인해야 「사실」이 되므로, 위 본문(= 01에 있는 것)과
+// 섞지 않고 주석으로 분리해 둔다. 채택되면 01에 먼저 반영하고 그때 본문으로 옮긴다.
+//
+// 왜 지금 적어 두는가: 이 중 둘(모집단 스냅숏, 재현성 칸)은 칸 없이 적재를 시작하면
+// 나중에 끼워 넣을 수 없다. 적재분 전체를 다시 만들어야 한다.
+//
+// --- 제안 1. 점수를 CDI 4축별로 저장한다 -----------------------------------
+// 지금 score 표는 score_type(CDI/고지충실도)만 구분하고 축은 나누지 않는다.
+// 종합 하나로 뭉치면 (a) 드릴다운에서 「어느 축이 나쁜가」를 못 보여주고
+// (b) 잔차 회귀에서 「위험등급 통제 후 어느 축이 잔차를 설명하는가」를 못 본다.
+//
+//   score.axis_id                 int  [null, ref: > axis.axis_id]
+//     // nullable — 고지충실도가 축 구조인지는 미확인(01 미확인 9)
+//   score.normalized_score        decimal [null]
+//   score.scoring_formula_version varchar  // 채점 공식은 관문 C까지 바뀐다
+//
+//   Table axis {                            // enum이 아니라 lookup 표로 두는 이유:
+//     axis_id       int  [pk]               // CDI 4축 변수표가 09-23에 나올 예정이라
+//     axis_code     varchar                 // 지금 enum으로 굳히면 그때마다 스키마 변경이다.
+//     axis_name     varchar                 // 표로 두면 행만 채우면 된다.
+//     effective_from date
+//   }
+//
+// --- 제안 2. comparison_population_key를 표로 승격한다 ----------------------
+// 지금은 문자열 칸 하나다. 문제 둘이 있다.
+//   (a) 층화 축이 아직 확정이 아니다(04 3-2 (c)안: risk_grade / fndTp 병행 확보 후
+//       관문 C에서 선택). 문자열에 축 조합을 지금 굳히면 축이 바뀔 때 전부 재작성이다.
+//   (b) **재현성이 깨진다.** 층별 분포를 점수 계산 때마다 재계산하면, 회귀를 두 번
+//       돌리는 사이에 데이터가 늘어 **같은 키가 다른 분포를 가리킨다.**
+//
+//   Table population_snapshot {
+//     population_snapshot_id      int  [pk]
+//     baseline_date               date
+//     product_category            product_category_enum
+//     risk_grade                  int      [null]  // 층화 축 후보 1
+//     fund_type                   varchar  [null]  // 층화 축 후보 2 (04 3-2 (c))
+//     product_class_code          varchar  [null]  // 상동
+//     stratification_axis_choice  varchar          // 이 스냅숏이 무엇으로 층을 나눴는지
+//     n                           int
+//     mean                        decimal
+//     sd                          decimal
+//     p10                         decimal
+//     p25                         decimal
+//     p50                         decimal
+//     p75                         decimal
+//     p90                         decimal
+//     excluded_pending_etf_count  int   // 04가 요구한 「PENDING 제외 건수 기록」
+//     below_min_threshold_flag    boolean // 04 4절의 층당 30건 하한 미달 표시
+//     computed_at                 timestamp
+//   }
+//   score.population_snapshot_id  int [ref: > population_snapshot.population_snapshot_id]
+//     // 기존 comparison_population_key 문자열을 이 FK로 대체
+//
+// --- 제안 3. 절 표에 부·절 계층과 위치를 둔다 -------------------------------
+// 지금 section 표에는 부와 절을 가르는 칸이 없다. section_seq가 부 안의 순번인지
+// 문서 전체 순번인지 문서에 명시돼 있지 않다.
+// 그리고 「구조 접근성」 축이 조항의 문서 내 상대 위치를 쓰는데, 산출 단위가 부·절로
+// 확정되면서 계산 방법이 열려 있다(Project-Management/docs/08-m1-decisions.md 2-6절에
+// 선택지 셋). 아래 셋이 있으면 **어느 선택지가 채택돼도 재적재가 필요 없다.**
+//
+//   section.part_seq     int   // 부 순번
+//   section.char_start   int   // 문서(또는 부) 시작 기준 문자 오프셋
+//   section.char_length  int   // 절 길이
+//     // 문서 총 길이는 MAX(char_start + char_length)로 파생한다 — 01의
+//     // 「파생 가능한 값은 칸으로 두지 않는다」 원칙과 같다.
+//
+// --- 제안 4. 재처리 실행을 구분한다 (01 미확인 24) --------------------------
+//   section.extraction_run_id  varchar  // 어느 파서 실행에서 나온 절인가
+//     // 17 실측대로 부·절 분할은 아직 진화 중이다(292/294). 파서를 고쳐 다시 뽑으면
+//     // 절 경계가 달라지는데 지금은 어느 실행 결과인지 구분할 수 없다.
+//     // raw_object.sha256은 「내용이 바뀌었나」는 구분하지만 「같은 내용을 다른 파서로
+//     // 다시 뽑았나」는 구분하지 못한다.
+//
+// 넷 다 지금 값을 채울 로직은 필요 없다. 칸만 확보해 두면 된다.
