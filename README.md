@@ -41,13 +41,14 @@ Project-Management README의 규칙 **(사실) / 미정 / 제안**을 따릅니�
 
 ## scripts
 
-인증키 없이 도는 재현 스크립트만 둔다. 키가 필요한 소스의 스크립트는 키를 환경변수로 받고 저장소에 값을 넣지 않는다.
+키가 필요한 스크립트는 `.env`에서 읽는다. 키 값은 저장소에 넣지 않는다(`.gitignore` 처리, 이름만 `.env.example`에).
 
 | 스크립트 | 용도 |
 |---|---|
 | `fetch_kofia_ann.py` | 금투협 전자공시 펀드공시검색 조회. 근거와 파라미터 설명은 gate-a/12 |
 | `parse_kofia_ann.py` | 응답 XML을 행 CSV로 풀고 자연키 묶음 분포를 출력 |
 | `kofia_attachments.py` | 수시공시 첨부 조회·다운로드. 한 묶음의 행들이 같은 파일을 가리키는지 비교 |
+| `verify_etf_rule.py` | 검증 2. ETF 「상장지수」 규칙의 누락·오탐률 대조. **인증키 2종 필요** |
 
 ```bash
 python3 scripts/fetch_kofia_ann.py 20260813 20260815 | python3 scripts/parse_kofia_ann.py > out.csv
