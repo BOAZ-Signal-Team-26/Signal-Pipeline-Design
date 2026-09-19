@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
-"""금감원 검사결과제재 OPEN API 수집 (J11·J12).
+"""금감원 검사결과제재 · 경영유의사항 등 공시 OPEN API 수집 (J11·J12).
 
 설계 근거는 gate-a/14 6절. **아직 인증키가 없어 실호출로 검증하지 못했다.**
 금감원 스펙 페이지(OPEN API > 상세 및 테스트 > 검사결과제재 API)의 공개 샘플에
 맞춰 짰다. 키를 받으면 --probe 로 남은 미확인 하나를 먼저 확인할 것.
 
+**두 API는 같은 표의 두 뷰다** (14 6절). 필드 13개가 이름까지 동일하고 예시의
+`examMgmtNo`(검사관리번호)가 같다. 검사 1건에서 나온 조치가 `emOpenSeq` 1·2로
+갈리며 `transCode` 0/1, `actGbn` 10/20으로 구분된다. 그래서 파서는 하나면 되고
+`--kind`로 엔드포인트만 바꾼다.
+
 용례:
     python3 scripts/fetch_fss_sanctions.py --probe                 # 날짜 필터 대상 확인
     python3 scripts/fetch_fss_sanctions.py --from 2026-01-01 --to 2026-09-20 > s.csv
+    python3 scripts/fetch_fss_sanctions.py --kind impr --from 2026-01-01 > i.csv
 
 주의 넷 (전부 gate-a/14 6절)
 - **JSON 루트 키는 `reponse`다.** `response`가 아니라 금감원 스펙의 오타 그대로다.
@@ -30,7 +36,11 @@ import time
 import urllib.parse
 import urllib.request
 
-URL = "https://www.fss.or.kr/fss/kr/openApi/api/openInfo.jsp"
+# 두 엔드포인트는 요청 변수도 결과 필드도 같다. 다른 것은 경로뿐이다.
+URLS = {
+    "sanction": "https://www.fss.or.kr/fss/kr/openApi/api/openInfo.jsp",      # 검사결과제재
+    "impr": "https://www.fss.or.kr/fss/kr/openApi/api/openInfoImpr.jsp",      # 경영유의사항 등
+}
 
 # 결과변수 표 그대로. 순서를 CSV 열 순서로 쓴다.
 FIELDS = ["emOpenNo", "examMgmtNo", "transCode", "emOpenSeq", "actGbn",
@@ -52,15 +62,16 @@ def load_env(path: str = ".env") -> None:
                 os.environ.setdefault(name.strip(), value.strip())
 
 
-def call(key: str, start: str, end: str, timeout: int = 60,
-         attempts: int = 3) -> list[dict[str, str]]:
+def call(key: str, start: str, end: str, kind: str = "sanction",
+         timeout: int = 60, attempts: int = 3) -> list[dict[str, str]]:
     query = urllib.parse.urlencode({"apiType": "json", "startDate": start,
                                     "endDate": end, "authKey": key})
     last: Exception | None = None
     for attempt in range(attempts):
         try:
             request = urllib.request.Request(
-                "%s?%s" % (URL, query), headers={"User-Agent": "Mozilla/5.0"})
+                "%s?%s" % (URLS[kind], query),
+                headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 payload = json.loads(response.read().decode("utf-8", "replace"))
             # 스펙의 오타를 그대로 따르되, 금감원이 고칠 경우에 대비해 둘 다 본다.
@@ -73,7 +84,7 @@ def call(key: str, start: str, end: str, timeout: int = 60,
             last = error
             if attempt < attempts - 1:
                 time.sleep(2 * (attempt + 1))
-    raise RuntimeError("검사결과제재 조회 실패 (%s~%s): %s" % (start, end, last))
+    raise RuntimeError("%s 조회 실패 (%s~%s): %s" % (kind, start, end, last))
 
 
 def spans(start: str, end: str) -> list[tuple[str, str]]:
@@ -87,14 +98,14 @@ def spans(start: str, end: str) -> list[tuple[str, str]]:
     return out
 
 
-def probe(key: str) -> None:
+def probe(key: str, kind: str = "sanction") -> None:
     """날짜 필터가 actReqDate에 걸리는지 inputDate에 걸리는지 가른다 (14 6절 미확인).
 
     두 날짜가 어긋나는 행이 있으면 조회 구간 밖의 값을 가진 쪽이 필터 대상이 아니다.
     """
     start, end = "2026-04-24", "2026-04-24"
-    rows = call(key, start, end)
-    print("%s~%s: %d행" % (start, end, len(rows)))
+    rows = call(key, start, end, kind)
+    print("%s %s~%s: %d행" % (kind, start, end, len(rows)))
     for row in rows[:20]:
         act = (row.get("actReqDate") or "").replace(".", "-")
         inp = (row.get("inputDate") or "")[:10]
@@ -109,6 +120,8 @@ def main() -> None:
     parser.add_argument("--from", dest="start", default="2026-01-01", help="YYYY-MM-DD")
     parser.add_argument("--to", dest="end",
                         default=dt.date.today().isoformat(), help="YYYY-MM-DD")
+    parser.add_argument("--kind", choices=sorted(URLS), default="sanction",
+                        help="sanction=검사결과제재, impr=경영유의사항 등 공시")
     parser.add_argument("--probe", action="store_true",
                         help="날짜 필터 대상 필드만 확인하고 끝낸다")
     args = parser.parse_args()
@@ -121,7 +134,7 @@ def main() -> None:
                  "법인 신청은 요청 IP 등록이 따른다 — gate-a/14 6절.")
 
     if args.probe:
-        probe(key)
+        probe(key, args.kind)
         return
 
     writer = csv.DictWriter(sys.stdout, fieldnames=FIELDS, extrasaction="ignore")
@@ -131,7 +144,7 @@ def main() -> None:
     for index, (start, end) in enumerate(windows, 1):
         if index > 1:
             time.sleep(CALL_INTERVAL)
-        rows = call(key, start, end)
+        rows = call(key, start, end, args.kind)
         writer.writerows(rows)
         total += len(rows)
         print("  [%d/%d] %s~%s %5d건 (누적 %d)"
