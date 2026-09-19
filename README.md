@@ -35,7 +35,7 @@ Project-Management README의 규칙 **(사실) / 미정 / 제안**을 따릅니�
 | 06 | 원본 vs 정정본, 「판매 중」 판정 시점 |
 | 07 | 조인 키 검증 요청서 (Join 확인 티켓 입력) |
 | 08~11 | 검증·실측 기록과 판정 기록 |
-| 12 | 금투협 수시공시 중복 행 실측 (검증 1). 「15행 = 클래스 개수」 확정, 자연키 검증, 코드 체계 혼재 |
+| 12 | 금투협 수시공시 중복 행 실측 (검증 1). 「15행 = 클래스 개수」와 동일 PDF 확정, 자연키 검증, 코드 체계 혼재 |
 
 굵은 글씨가 관문 A의 산출물 3건입니다.
 
@@ -47,6 +47,7 @@ Project-Management README의 규칙 **(사실) / 미정 / 제안**을 따릅니�
 |---|---|
 | `fetch_kofia_ann.py` | 금투협 전자공시 펀드공시검색 조회. 근거와 파라미터 설명은 gate-a/12 |
 | `parse_kofia_ann.py` | 응답 XML을 행 CSV로 풀고 자연키 묶음 분포를 출력 |
+| `kofia_attachments.py` | 수시공시 첨부 조회·다운로드. 한 묶음의 행들이 같은 파일을 가리키는지 비교 |
 
 ```bash
 python3 scripts/fetch_kofia_ann.py 20260813 20260815 | python3 scripts/parse_kofia_ann.py > out.csv
@@ -57,3 +58,5 @@ python3 scripts/fetch_kofia_ann.py 20260813 20260815 | python3 scripts/parse_kof
 `kofia_mgmt_codes.csv`: 금융투자협회 운용사 코드 536건 (코드 3자리, 운용사명, 단축명, 변경전 운용사명). 출처는 금투협 공지 첨부 양식의 부속 시트(2026-09-14 추출). 공식 마스터가 아니므로 갱신 주기는 미확인.
 
 `kofia_ann_sample.csv`: 금투협 펀드공시 2026-08-13~15 조회 결과 1,499행 (2026-09-19 수집). gate-a/12의 근거 표본.
+
+`kofia_pdf_hash_check.csv`: 금투협 공고 묶음 4개(운용사 4곳, 14~15행)의 첨부 sha256 비교 결과 (2026-09-19). gate-a/12 6절의 근거.
