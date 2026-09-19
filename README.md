@@ -56,6 +56,7 @@ Project-Management README의 규칙 **(사실) / 미정 / 제안**을 따릅니�
 | `fetch_kofia_sales.py` | 판매회사 마스터와 판매사별 펀드 목록. `상품_판매사` 브릿지 입력 |
 | `hwp_text.py` | HWP 5.0 본문 추출 (외부 의존성 없음). 분쟁조정결정례 확인에 사용 |
 | `fetch_fss_sanctions.py` | 금감원 검사결과제재·경영유의사항 공시. **인증키 필요, 실호출 미검증** |
+| `fetch_fss_dispute.py` | 금감원 분쟁조정결정례 게시판 목록·첨부 수집 (인증키 불필요) |
 | `_ole.py` | OLE 복합문서 판독 (`hwp_text.py`가 쓰는 내부 모듈) |
 
 ```bash
