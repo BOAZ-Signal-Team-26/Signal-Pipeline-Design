@@ -56,6 +56,12 @@ def attachments(company, date, code, tx, version, seq="1"):
         input=body.encode("utf-8"), capture_output=True,
     )
     xml = result.stdout.decode("utf-8", "replace")
+    # 목록 조회와 같은 서버·같은 함정이다. 잘린 XML은 첨부를 조용히 적게 센다.
+    if result.returncode != 0 or not xml.rstrip().endswith("</root>"):
+        raise RuntimeError(
+            "첨부 목록 조회 실패 (%s %s %s): 응답이 </root>로 끝나지 않음 (%d바이트)"
+            % (company, date, code, len(xml))
+        )
     start = xml.find("<file>")
     if start < 0:
         return []

@@ -10,7 +10,7 @@ raw/{source}/{collected_date}/{source_doc_key}__v{version_seq}.{ext}
 
 - `source`: 소스 식별자(예: `dart`, `kofia_disclosure`, `sanction`, `dispute`).
 - `collected_date`: 수집을 실행한 날짜(YYYY-MM-DD). 기준일이 아니라 실제 수집 시각의 날짜를 쓴다.
-- `source_doc_key`: 01 문서 표의 소스 공통 자연키(DART는 rcept_no, 금투협 수시공시는 `(companyCd, standardDt, announceTtl, tmpV1)` 해시, 제재공시는 제재정보번호, 분쟁조정은 게시글 번호).
+- `source_doc_key`: 01 문서 표의 소스 공통 자연키(DART는 rcept_no, 금투협 수시공시는 `(companyCd, standardDt, announceTtl, tmpV1)` 해시, 제재공시는 **`(소스, emOpenNo)`** — 경영유의사항 공시를 함께 받으면 같은 번호 공간을 쓰는지 미실측이라 소스를 앞에 둔다(`14` 6절) —, 분쟁조정은 게시글 번호).
 - `version_seq`: 같은 자연키를 다시 받았을 때 증가하는 버전 번호. 아래 「같은 문서를 다시 받았을 때」 참조.
 
 **결정**: 경로에 문서 자연키(`source_doc_key`)를 그대로 노출한다.
