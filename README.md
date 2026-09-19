@@ -73,4 +73,8 @@ python3 scripts/fetch_kofia_ann.py 20260813 20260815 | python3 scripts/parse_kof
 
 `kofia_pdf_hash_check.csv`: 금투협 공고 묶음 4개(운용사 4곳, 14~15행)의 첨부 sha256 비교 결과 (2026-09-19). gate-a/12 6절의 근거.
 
+`dart_sections_sample.csv`: DART 투자설명서 9건의 부·절 분해 294행 (2026-09-20). gate-a/17의 표본 확대분.
+
+`fss_dispute_sample.csv`: 분쟁조정결정례 글 8개의 첨부 15건 메타와 추출 결과 (2026-09-20). gate-a/14 5절의 표본 확대분.
+
 `etf_rule_check.csv`: 공공데이터포털 펀드상품기본정보 183,649건 중 「상장지수」 포함 1,435건 (2026-09-19). gate-a/13의 근거.
