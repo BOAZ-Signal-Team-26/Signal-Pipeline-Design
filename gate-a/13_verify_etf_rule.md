@@ -1,7 +1,14 @@
 # 13. ETF 「상장지수」 문자열 규칙 검증 (검증 2)
 
 실측일 2026-09-19, 대현. 티켓 「금투협 공시 중복 행과 ETF 이름 규칙 검증」의 검증 2.
-재현 스크립트는 `scripts/verify_etf_rule.py`. 적중 목록은 `reference/etf_rule_check.csv`.
+재현 스크립트는 `scripts/verify_etf_rule.py`. 대조 결과는 `reference/etf_rule_check.csv`.
+
+```bash
+python3 scripts/verify_etf_rule.py --base-date 20260904 --cache /tmp/funds.json
+```
+
+이 한 줄로 아래 수치가 그대로 재현된다(09-19 확인). 스크립트는 완전일치가 아니라
+**포함매칭**을 쓴다. 이유는 4절에 있다.
 
 ## 결론 먼저
 
