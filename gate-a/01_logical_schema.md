@@ -130,7 +130,7 @@
 | is_current | 파생 칼럼 (00b 반영, 신설). 물리화 여부는 관문 B에서 결정 |
 | initial_submit_date | 정정본이면 정정신고 요소에 적힌 최초제출일. 원본이면 received_date와 같다 |
 | received_date | 접수일자 |
-| parse_status | 문서 단위 파싱 성공/실패 플래그. **정의를 「하위 원본파일 extract_status의 집계값」으로 바꾼다 (00b 반영)**. 판정 기준은 03 |
+| parse_status | 문서 단위 파싱 성공/실패 플래그. **정의를 「하위 원본파일 extract_status의 집계값」으로 바꾼다 (00b 반영)**. 판정 기준은 03. 값 집합 `PARSE_OK` / `PARSE_PARTIAL` / `PARSE_FAILED` **(09-20 확정)** |
 
 ### source_doc_key 소스별 값 규칙 (00b 반영, 신설)
 
@@ -198,7 +198,7 @@
 | section_seq | 문서 내 부·절 순번 |
 | section_title | 절 제목 |
 | section_text | 정규화된 본문 텍스트 |
-| extract_status | 본문 추출 성공/실패 플래그. 판정 기준은 03 |
+| extract_status | 본문 추출 성공/실패 플래그. 판정 기준은 03. 성공 = `EXTRACT_OK`, 일반 실패 = `EXTRACT_FAILED`, 세분 사유 4종은 유지 **(09-20 확정)** |
 
 **결정**: 점수를 절 단위로 저장하기 위한 전제 표로 절을 문서와 분리한다.
 **근거**: 진단 도구형(B)이 드릴다운 화면으로 흡수되려면 점수가 문서 단위가 아니라 절 단위로 있어야 한다고 최종 산출물 성격에 명시되어 있다.
@@ -282,7 +282,7 @@
 | request_params | 요청에 사용한 파라미터 전체 |
 | response_code | 응답 코드(HTTP 상태 등) |
 | collect_status | success / failed / permanent_failed 등. 03의 수집 실패 판정과 연동 |
-| extract_status | 본문 추출 성공/실패 플래그. 03의 본문 추출 실패 판정과 연동 |
+| extract_status | 본문 추출 성공/실패 플래그. 03의 본문 추출 판정과 연동. 절 표와 같은 값 집합, 성공 = `EXTRACT_OK` **(09-20 확정)** |
 
 **결정**: 수집 단계의 실패도 격리 폴더로 파일을 옮기지 않고 이 표의 collect_status 칼럼으로만 표시한다.
 **근거**: 02의 원본 불변 원칙과 맞물려 파일 이동 자체를 만들지 않는 편이 더 단순하다. 자세한 판정 기준과 재시도 정책은 03을 따른다.

@@ -100,12 +100,24 @@ Enum collect_status_enum {
 }
 
 Enum raw_extract_status_enum {
+  EXTRACT_OK [note: '추출 성공 (09-20 확정). 03의 판정 기준(텍스트 500자 미만·깨진 문자 30% 초과·형식 미지원)을 모두 통과']
+  EXTRACT_FAILED [note: '아래 세분 사유에 해당하지 않는 일반 실패 (09-20 확정). 03 판정 기준 중 하나 이상 위반. 자동 재시도 대상']
   EXTRACT_UNSUPPORTED_FORMAT [note: 'HWP 3.0. 분쟁조정 첨부 94건 실측. 자동 재시도 제외']
   EXTRACT_PARTIAL [note: '배포용 HWP(암호화), 7건. PrvText로 약 1,022자 부분 복구. 자동 재시도 제외']
   OCR_CANDIDATE [note: 'BMP 내장 4건. 보조 플래그. 재시도 대상']
   EXTRACT_NOT_APPLICABLE [note: 'DART document.xml처럼 본문이 원래 없는 파일. 실패 아님']
 
-  // "성공" 리터럴이 03 어디에도 정의돼 있지 않다 — 부록 참고.
+  // 성공 리터럴(EXTRACT_OK)과 일반 실패(EXTRACT_FAILED)는 09-20에 확정했다(7차 미팅).
+  // 절 표(section)의 extract_status도 이 enum을 공유한다.
+}
+
+Enum parse_status_enum {
+  PARSE_OK [note: '채점 대상 파일(file_role = body_pdf · prospectus · prospectus_simple)이 전부 EXTRACT_OK']
+  PARSE_PARTIAL [note: '채점 대상 파일 중 일부만 EXTRACT_OK, 또는 EXTRACT_PARTIAL이 섞임']
+  PARSE_FAILED [note: '채점 대상 파일 중 EXTRACT_OK가 하나도 없음']
+
+  // 09-20 확정. document.parse_status = 하위 raw_object.extract_status의 집계값(00b).
+  // EXTRACT_NOT_APPLICABLE 파일(cover_xml 등 본문이 원래 없는 것)은 집계에서 뺀다.
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -124,7 +136,7 @@ Table product {
   product_category product_category_enum [not null]
   is_etf boolean [not null, note: '파생 계산 칼럼이 아니라 2단 판정 결과(13) — etf_confidence와 함께 해석']
   etf_confidence etf_confidence_enum [not null, note: '13 반영, 신설']
-  fund_key varchar [note: '클래스 표기를 뺀 본체명+manager_id로 만드는 펀드(종류형 모) 단위 파생키. 04의 CDI 정규화 모집단·최소표본 30건 판정이 이 그룹핑에 의존한다. 매번 재계산하는 파생값인지 고정 서러게이트인지 미정 — 관문 B(SCD2 물리화) 이전에 반드시 정해야 함(미확인 23). 길이도 미정']
+  fund_key varchar [note: '펀드(종류형 모) 단위 키. 09-20 PM 결정: 고정 서러게이트. 상품이 처음 들어올 때 한 번만 「클래스 표기를 뺀 본체명+manager_id」로 묶음을 정하고 그 묶음에 일련번호를 발급, 이후 상품명 정정·정규화 규칙 변경에도 번호는 바뀌지 않는다. 신규 클래스는 같은 계산으로 기존 묶음을 찾아 번호를 붙인다. 04의 정규화 모집단·최소표본 30건·회귀 관측 단위가 이 번호에 의존한다. 물리화(자료형·길이)는 관문 B. 이전 「매번 재계산 파생값인지 미정」(미확인 23)은 이 결정으로 닫힘']
   risk_grade int [note: '1~6, 1이 최고위험. DART 투자설명서 표지 "N등급[문구]"에서 정규식(\\d)등급으로 추출. corp_code 조인이 아니라 문서→상품 경로로 채움. 위험등급 원천이 DART 하나만은 아닐 수 있음(금투협 첨부 PDF 본문에도 표기 확인, 16 3절, 미확인 22) — 04 3-2절 내생성 논증의 전제이므로 재검토 대상']
   manager_id int [ref: > distributor.distributor_id, not null, note: '운용사만. 판매사는 상품 표에 두지 않고 product_distributor N:M으로 분리']
   sale_start_date date [note: '판매시작일 후보=공공데이터포털 setpDt(설정일). 결측 0.00%(183,649건 전건)지만 "11111111" 등 더미 5건 있어 연도 범위 검증 필요(14)']
@@ -199,7 +211,7 @@ Table document {
   is_current boolean [note: '파생 칼럼(00b 반영, 신설). 물리 칼럼으로 둘지는 관문 B 이력 설계에서 결정']
   initial_submit_date date [note: '정정본이면 정정신고 요소에 적힌 최초제출일. 원본이면 received_date와 같다']
   received_date date [not null, note: '접수일자']
-  parse_status varchar [note: '문서 단위 파싱 성공/실패 플래그. 정의="하위 원본파일(raw_object) extract_status의 집계값"(00b 반영)이지만, 집계 결과 값의 도메인(예: 성공/부분성공/실패)이 01·03 어디에도 명시돼 있지 않다 — 부록 참고. 임시로 varchar, 값 목록 미정']
+  parse_status parse_status_enum [note: '문서 단위 파싱 플래그 = 하위 원본파일(raw_object) extract_status의 집계값(00b 반영). 값 집합 PARSE_OK / PARSE_PARTIAL / PARSE_FAILED는 09-20 확정 — parse_status_enum 참고']
 
   Note: '''
   단위 = "수집한 원천 문서 1건"(00b A1). DART는 접수번호 단위, 금투협 수시공시는 공고
@@ -242,7 +254,7 @@ Table section {
   section_seq int [not null, note: '문서 내 부·절 순번']
   section_title text
   section_text text [note: '정규화된 본문 텍스트. 추출 실패 시 원문 그대로(정규화 이전 상태)를 두고 extract_status만 실패로 표시한다(03) — 즉 실패해도 이 칼럼이 비지는 않는다']
-  extract_status varchar [note: '본문 추출 성공/실패 플래그. 판정 기준(텍스트 500자 미만, 깨진 문자 30% 초과, 형식 미지원)은 03을 따른다. 다만 raw_object.extract_status처럼 구체 리터럴 값 집합이 01·03에 정의돼 있지 않다 — 단순 성공/실패 두 값인지, raw_object와 같은 세분 코드(EXTRACT_PARTIAL 등)를 공유하는지 미정. 부록 참고']
+  extract_status raw_extract_status_enum [note: '절 단위 본문 추출 플래그. 09-20 확정: raw_object와 같은 enum을 공유한다(성공 = EXTRACT_OK). 판정 기준(텍스트 500자 미만, 깨진 문자 30% 초과, 형식 미지원)은 03을 따른다']
 
   Note: '''
   점수를 절 단위로 저장하기 위한 전제 표(드릴다운: 문서 단위가 아니라 절 단위 점수).
@@ -310,7 +322,7 @@ Table raw_object {
   request_params text [not null, note: '요청에 사용한 파라미터 전체. 저장 구조(키-값 나열 방식)가 문서에 없어 형태 미정 — DB 종속 자료형(json/jsonb)은 물리 설계 사안이라 배제하고 text로 둔다']
   response_code varchar [note: '응답 코드(HTTP 상태 등). "등"이라는 표현으로 보아 HTTP 상태코드만은 아닐 수 있어 varchar로 둠. 길이 미정']
   collect_status collect_status_enum [not null, note: '03의 수집 실패 판정과 연동. 원문이 "success/failed/permanent_failed 등"이라 적어 이 셋이 닫힌 목록인지 확실하지 않다 — 부록 참고']
-  extract_status raw_extract_status_enum [note: '03의 본문 추출 실패 판정과 연동. "성공" 리터럴이 문서에 정의돼 있지 않다 — 부록 참고']
+  extract_status raw_extract_status_enum [note: '03의 본문 추출 판정과 연동. 성공 = EXTRACT_OK, 일반 실패 = EXTRACT_FAILED (09-20 확정)']
 
   Note: '''
   단위 = "원본파일 1건"(00b 반영, 구 수집_이력) — 사건(문서) 1건에 첨부가 여러 개
@@ -359,13 +371,13 @@ Table raw_object {
 //    타겟 DB 미정 제약 때문이다.
 //
 // enum 값 집합이 불완전하거나 리터럴이 문서에 없는 것
-// 5. document.parse_status — "하위 raw_object.extract_status의 집계값"이라는 정의만
+// 5. [09-20 해소 → parse_status_enum] document.parse_status — "하위 raw_object.extract_status의 집계값"이라는 정의만
 //    있고, 집계 결과가 갖는 값의 도메인(성공/부분성공/실패 등)이 01·03 어디에도 없다.
 //    enum으로 강제하지 못하고 varchar로 남겼다.
-// 6. section.extract_status — "성공/실패 플래그"라고만 적혀 있고, raw_object처럼
+// 6. [09-20 해소 → raw_extract_status_enum 공유] section.extract_status — "성공/실패 플래그"라고만 적혀 있고, raw_object처럼
 //    세분화된 리터럴(EXTRACT_PARTIAL 등)을 공유하는지, 아니면 단순 boolean 두 값인지
 //    문서에 없다. varchar로 남겼다.
-// 7. raw_object.extract_status — 03이 정의한 리터럴은 EXTRACT_UNSUPPORTED_FORMAT /
+// 7. [09-20 해소 → EXTRACT_OK · EXTRACT_FAILED 추가] raw_object.extract_status — 03이 정의한 리터럴은 EXTRACT_UNSUPPORTED_FORMAT /
 //    EXTRACT_PARTIAL / OCR_CANDIDATE / EXTRACT_NOT_APPLICABLE 넷뿐이고, "추출 성공"을
 //    가리키는 리터럴 이름이 어디에도 없다. enum에 성공 값을 추가하지 않았다 — 지어내면
 //    안 되는 항목이라고 판단했다.
@@ -402,7 +414,15 @@ Table raw_object {
 // 결정 주체를 정해야 한다.
 
 //////////////////////////////////////////////////////////////////////////////
-// 제안 (미확정) — data-scientist, 09-20. 아직 01에 반영되지 않았다
+// 제안 — data-scientist, 09-20. 아직 01에 반영되지 않았다
+//
+// [09-20 PM 결정] 아래 중 「실행 식별자」와 「제안 2(모집단 스냅숏 표 승격)」는 채택한다.
+//   - 실행 식별자: 표마다 버전 문자열을 따로 두지 않고 실행 번호(run_id) 하나를 두어
+//     section · score · population_snapshot이 같은 번호를 가리킨다. 「이 점수는 이 파서,
+//     이 산식, 이 모집단에서 나왔다」가 번호 하나로 따라온다.
+//   - 제안 2: comparison_population_key(문자열)를 population_snapshot 표의 FK로 바꾼다.
+//   물리 칼럼명·자료형은 관문 B(09-30)에서 확정하고, 그때 이 블록을 본문으로 옮긴다.
+//   제안 1(4축별 저장)·제안 3(부·절 계층)은 계속 제안 상태다.
 //////////////////////////////////////////////////////////////////////////////
 //
 // 이 저장소의 표기 규칙: 결정(작성자가 정한 것) → 관문 미팅에서 4인 확정 → (사실).

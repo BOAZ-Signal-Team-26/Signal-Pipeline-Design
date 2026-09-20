@@ -79,6 +79,8 @@
 
 | 상태값 | 조건 | 자동 재시도 |
 |---|---|---|
+| **EXTRACT_OK** | 추출 성공. 아래 판정 기준(500자 미만·깨진 문자 30%·형식 미지원)을 모두 통과 **(09-20 확정)** | 해당 없음 |
+| **EXTRACT_FAILED** | 세분 사유가 없는 일반 실패 **(09-20 확정)** | 대상 |
 | EXTRACT_UNSUPPORTED_FORMAT | HWP 3.0. 분쟁조정 첨부 94건 실측 | **제외** |
 | EXTRACT_PARTIAL | 배포용 HWP, 7건. PrvText로 약 1,022자 부분 복구 | **제외** |
 | OCR_CANDIDATE | BMP 내장 4건. 보조 플래그 | 대상 |
@@ -91,9 +93,11 @@
 **결정**: 문서 단위 실패는 문서 표(01)의 `parse_status`(하위 원본파일 extract_status의 집계값)에, 파일 단위 실패는 원본파일 표(01)의 `extract_status`에, 절 단위 실패는 절 표(01)의 `extract_status`에 각각 남긴다.
 **근거**: 파싱은 문서를 텍스트로 바꾸는 단계 전체의 성패이고, 본문 추출 실패는 그 중 특정 파일·절이 깨졌는지를 가리는 더 세밀한 판정이라 층위가 다르다. 플래그를 하나로 합치면 「문서는 파싱됐는데 특정 첨부·절만 깨진」 경우를 표현할 수 없다.
 
+**집계 규칙 (09-20 확정)**: `parse_status`는 `PARSE_OK` / `PARSE_PARTIAL` / `PARSE_FAILED` 세 값이다. 채점 대상 파일(`file_role` = body_pdf · prospectus · prospectus_simple)이 전부 `EXTRACT_OK`면 OK, 일부만이면 PARTIAL, 하나도 없으면 FAILED. `EXTRACT_NOT_APPLICABLE` 파일(표지 XML 등)은 집계에서 뺀다. 「성공 처리된 절만 CDI 대상」 필터는 절 표의 `extract_status = EXTRACT_OK`로 건다.
+
 **격리와 재처리**
 
-**결정**: 추출 실패한 절은 section_text를 원문 그대로(정규화 이전 상태) 두고 extract_status만 `failed`로 표시한다. 실패한 절만 다시 처리하는 큐·스케줄은 만들지 않는다.
+**결정**: 추출 실패한 절은 section_text를 원문 그대로(정규화 이전 상태) 두고 extract_status만 실패 값(`EXTRACT_FAILED` 또는 세분 사유 코드)으로 표시한다. 절 표의 extract_status는 원본파일 표와 같은 값 집합을 쓴다 **(09-20 확정)**. 실패한 절만 다시 처리하는 큐·스케줄은 만들지 않는다.
 **근거**: 재처리 오케스트레이션은 관문 B 사안이다. 09-16 시점에는 「실패를 어디서 알아볼 수 있는가」만 정하면 09-17 수집 개발이 시작할 수 있다.
 
 ## 참조
