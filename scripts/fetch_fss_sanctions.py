@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """금감원 검사결과제재 · 경영유의사항 등 공시 OPEN API 수집 (J11·J12).
 
-설계 근거는 gate-a/14 6절. **아직 인증키가 없어 실호출로 검증하지 못했다.**
+설계 근거는 gate-a/14 6절. **2026-09-21 실호출로 검증 완료 (키 발급 09-21).**
 금감원 스펙 페이지(OPEN API > 상세 및 테스트 > 검사결과제재 API)의 공개 샘플에
-맞춰 짰다. 키를 받으면 --probe 로 남은 미확인 하나를 먼저 확인할 것.
+맞춰 짰고, 아래 「실호출로 확인한 것」 절이 그 검증 결과다.
 
 **두 API는 같은 표의 두 뷰다** (14 6절). 필드 13개가 이름까지 동일하고 예시의
 `examMgmtNo`(검사관리번호)가 같다. 검사 1건에서 나온 조치가 `emOpenSeq` 1·2로
@@ -12,8 +12,8 @@
 
 용례:
     python3 scripts/fetch_fss_sanctions.py --probe                 # 날짜 필터 대상 확인
-    python3 scripts/fetch_fss_sanctions.py --from 2026-01-01 --to 2026-09-20 > s.csv
-    python3 scripts/fetch_fss_sanctions.py --kind impr --from 2026-01-01 > i.csv
+    python3 scripts/fetch_fss_sanctions.py --from 2026-09-01 --to 2026-09-30 > s.csv
+    python3 scripts/fetch_fss_sanctions.py --kind impr --from 2026-09-01 --to 2026-09-30 > i.csv
 
 주의 넷 (전부 gate-a/14 6절)
 - **JSON 루트 키는 `reponse`다.** `response`가 아니라 금감원 스펙의 오타 그대로다.
@@ -23,6 +23,23 @@
   증분은 날짜로 잡는다.
 - 응답에 **상품을 가리키는 칸이 없다.** 본문도 `㉮펀드`로 마스킹이라
   `문서.product_id`는 영구 NULL이고, 붙는 축은 `finInstName`(판매사)뿐이다.
+
+실호출로 확인한 것 (2026-09-21, 개인용 인증키)
+- **응답 인코딩은 `euc-kr`이다, `utf-8`이 아니다.** `Content-Type: text/html;charset=euc-kr`.
+  이전 버전은 `utf-8`로 강제 디코드해 한글 필드(`resultMsg`·`finInstName`·`actObjContent`)가
+  전부 깨졌다(치환문자로 뭉갬). 지금 버전은 `euc-kr`로 고쳤다.
+- **`resultCode`는 성공/실패가 아니라 네 갈래다.** `1`=정상(결과 0건 포함 가능) /
+  `900`=그 구간에 자료 없음(정상, 에러 아님) / `030`=조회기간이 키 등급의 상한을 넘음 /
+  `033`=**일일 조회 건수 초과**. 이전 버전은 `1`이 아니면 전부 예외로 던져 `900`(빈 결과)도
+  실패로 잘못 처리했다. 지금은 `900`을 빈 리스트로 반환한다.
+- **개인용 키는 한 번 호출에 최대 1개월치만 조회된다.** `030` 메시지 원문:
+  「최대 조회기간 초과(개인 : 1개월)」. 이전 `CHUNK_DAYS = 90`은 개인 키에서 전부 `030`으로 실패한다.
+  법인 키의 상한은 미확인 — 법인 키를 받으면 재확인할 것.
+- **일일 조회 건수 한도는 30회다.** `sanction`·`impr` 두 엔드포인트가 **같은 키의 같은 한도를
+  공유한다**(양쪽에서 각각 확인). 초과하면 `033`이 오고 다음 초기화 시점은 확인하지 못했다
+  (달력일 자정 추정, 미확인). **하루 계획 호출 수를 30 밑으로 반드시 잡을 것.**
+- 2026-09-01~09-30 구간에서 `resultCnt=8`을 확인했다(`resultCode=1`). 단, 이 구간의 실제
+  행 내용은 **그 직후 일일 한도 초과로 받지 못했다** — 다음 조회일에 재수집해야 한다.
 """
 from __future__ import annotations
 
@@ -47,9 +64,10 @@ FIELDS = ["emOpenNo", "examMgmtNo", "transCode", "emOpenSeq", "actGbn",
           "finInstName", "actReqDate", "actOrganCon", "actOfficerCon",
           "actEmpCon", "actObjContent", "inputDate", "inputMan"]
 
-# 값의 근거는 gate-a/15 9절. CHUNK_DAYS는 한 응답의 건수 상한을 몰라 잠정값이다.
+# 값의 근거는 gate-a/15 9절 + 09-21 실호출.
 CALL_INTERVAL = 1.0     # 방어적 수집 원칙(조사 상세 2-1)
-CHUNK_DAYS = 90         # 페이징이 없어 기간을 쪼갠다 (15 10절 미확인 13)
+CHUNK_DAYS = 28         # 개인 키 실측: 한 호출 최대 1개월(030). 28일로 여유를 둔다.
+DAILY_CALL_LIMIT = 30   # 실측(033): sanction·impr 공유. 초과분은 이 스크립트가 막지 않는다 — 호출 전 직접 셀 것.
 
 
 def load_env(path: str = ".env") -> None:
@@ -63,6 +81,19 @@ def load_env(path: str = ".env") -> None:
                 os.environ.setdefault(name.strip(), value.strip())
 
 
+# resultCode 실측 (2026-09-21). 「모름」이던 것을 실호출로 확정했다.
+RESULT_NO_DATA = "900"     # 정상 — 그 구간에 자료가 없다. 예외로 던지면 안 된다.
+RESULT_OK = "1"
+# 재시도해도 풀리지 않는 코드. 여기서 즉시 멈춰야 한다 —
+# 033을 백오프하며 3번 두드리면 이미 바닥난 일일 한도를 스크립트 자신이 더 깎아 먹는다
+# (실측: 033도 정상 호출과 똑같이 한도를 소비한다).
+RESULT_NO_RETRY = {"033": "일일 조회 건수(30회) 초과", "030": "조회기간이 키 등급 상한 초과(개인:1개월)"}
+
+
+class FssQuotaError(RuntimeError):
+    """재시도로 해결되지 않는 금감원 응답 (일일 한도·기간 상한 등)."""
+
+
 def call(key: str, start: str, end: str, kind: str = "sanction",
          timeout: int = 60, attempts: int = 3) -> list[dict[str, str]]:
     query = urllib.parse.urlencode({"apiType": "json", "startDate": start,
@@ -74,13 +105,23 @@ def call(key: str, start: str, end: str, kind: str = "sanction",
                 "%s?%s" % (URLS[kind], query),
                 headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(request, timeout=timeout) as response:
-                payload = json.loads(response.read().decode("utf-8", "replace"))
+                # 응답은 euc-kr이다 (Content-Type: text/html;charset=euc-kr, 09-21 실측).
+                # utf-8로 읽으면 한글 필드가 전부 깨진다.
+                payload = json.loads(response.read().decode("euc-kr", "replace"))
             # 스펙의 오타를 그대로 따르되, 금감원이 고칠 경우에 대비해 둘 다 본다.
             body = payload.get("reponse") or payload.get("response") or {}
-            if str(body.get("resultCode", "")) != "1":
-                raise RuntimeError("금감원 오류: %s" % body.get("resultMsg", payload))
+            code = str(body.get("resultCode", ""))
+            if code == RESULT_NO_DATA:
+                return []  # 정상적인 빈 결과. 실패가 아니다.
+            if code in RESULT_NO_RETRY:
+                raise FssQuotaError("금감원 오류 [%s] %s: %s"
+                                     % (code, RESULT_NO_RETRY[code], body.get("resultMsg", "")))
+            if code != RESULT_OK:
+                raise RuntimeError("금감원 오류 [%s]: %s" % (code, body.get("resultMsg", payload)))
             rows = body.get("result") or []
             return [rows] if isinstance(rows, dict) else rows
+        except FssQuotaError:
+            raise  # 즉시 중단. 백오프하지 않는다.
         except Exception as error:
             last = error
             if attempt < attempts - 1:
