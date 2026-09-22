@@ -362,7 +362,7 @@ Table raw_object {
   source_baseline_date date
   file_role file_role_enum [not null, note: 'CDI 채점 대상을 가리는 유일한 칸 — 금투협은 문서 1건(공고)에 첨부가 2~3종이고 document_type이 "금투협 수시공시" 한 값이므로, 이 칸이 없으면 어느 파일을 채점할지 정할 자리가 없다']
   sha256 varchar(64) [not null, note: '파일 콘텐츠 해시(hex 다이제스트, 64자). 02의 재수집 시 버전 증가 여부·중복 저장 판정 키. 동일 바이트 검출에 사용한다. 해시가 다르더라도 요약/본문의 내용 중복은 가능하므로 대표 문서 선택을 대체하지 않는다']
-  storage_path text [not null, note: '02_raw_storage_policy.md의 raw/{source}/{collected_date}/{object_key_hash}/{file_role}__v{version_seq}.{ext} 규칙']
+  storage_path text [not null, note: '02_raw_storage_policy.md의 raw/{source}/{collected_date}/{object_key_hash}/{file_role}__v{version_seq}.{ext} 규칙. RAW_ROOT 기준 상대경로만 저장, 절대경로 금지(09-22)']
   blob_path text [note: '관문 B 후보 칸(09-16 아키텍트 반영). CAS(blobs/{sha256 앞 2자}/{sha256}) 채택이 관문 B로 미뤄져 현재는 쓰지 않는다']
   file_name text [not null, note: '원본 파일명(서버 저장명 포함)']
   content_type varchar [note: 'MIME 타입. 길이 미정']
@@ -404,7 +404,7 @@ Table pipeline_run {
   run_id varchar [pk, note: '수집·추출·채점·모집단을 잇는 실행 식별자. 같은 실행 재시도에는 유지']
   baseline_date date [not null]
   status varchar [not null, note: 'RUNNING/SUCCEEDED/FAILED. 실행 완료 이후 결과는 불변']
-  config_manifest text [not null, note: 'JSON: 파서/전처리/산식/매칭/사전 버전, 소스 컷오프, 설정, 소스코드 버전']
+  config_manifest text [not null, note: 'JSON: 파서/전처리/산식/매칭 버전, 용어 사전·고지 감점표·LLM 프롬프트 버전(09-22), 축간 정규화 가중치·임계값 설정, 소스 컷오프, 소스코드 버전']
   config_sha256 varchar(64) [not null]
   input_manifest_path text [note: '사용한 raw_object 목록과 상품/매칭/위험등급/판매관계 스냅숏. 완료 실행에 필수']
   input_manifest_sha256 varchar(64)

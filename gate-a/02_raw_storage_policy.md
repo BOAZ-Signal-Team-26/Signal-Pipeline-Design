@@ -24,6 +24,7 @@ raw/{source}/{collected_date}/{object_key_hash}/{file_role}__v{version_seq}.{ext
 ## 2. 원본과 요청은 다른 단위
 
 - `raw_object`는 실제 저장한 바이트의 버전이다. SHA-256·storage_path는 필수다.
+- `storage_path`는 **`RAW_ROOT` 기준 상대경로만** 저장한다(09-22). 절대경로를 넣으면 노트북·서버마다 루트가 달라 DB 덤프를 옮길 때 경로가 전부 무효가 된다. 오브젝트 스토리지로 옮기면 이 상대경로가 그대로 객체 키가 된다.
 - `collection_attempt`는 요청 한 번이다. 타임아웃처럼 바이트가 없으면 raw_object_id=NULL인 시도만 기록한다. 가짜 파일·빈 해시를 만들지 않는다.
 - HTTP 오류라도 응답 바이트가 있으면 원본으로 보존할 수 있다. `collect_status=failed`인 파일은 본문 추출 대상으로 쓰지 않는다.
 - 정상 빈 API 응답도 바이트가 있으면 보존하고, 시도 outcome=EMPTY로 기록한다.
