@@ -1,68 +1,82 @@
-# 02. 원본 보관 규칙 (1단계 데이터 테이블·ERD 설계)
+# 02. 원본 보관 규칙 — 2026-09-22 재검토안
 
-작성일 2026-09-14. 00b 검토 메모(A4) 검토 후 아키텍트 판정(09-16 반영, 09-14 밤)으로 CAS(콘텐츠 주소 저장) 채택은 2단계 데이터 파이프라인 Flow 설계로 미뤘다. 저장소 종류(로컬 디스크 / 오브젝트 스토리지)는 2단계 데이터 파이프라인 Flow 설계 사안이므로 정하지 않는다. 아래 경로 규칙은 두 저장소 어느 쪽에서도 동일하게 동작하도록 상대 경로 형태로만 정의한다.
+원본 바이트는 불변이다. 저장소 제품과 CAS 채택은 Gate B에서 결정한다. 아래는 문서·API·실패 응답 모두에 적용하는 **논리 경로 제안**이다. 기존 저장 파일을 이동하거나 덮어쓰지 않았다.
 
-## 폴더 경로 규칙
+## 1. 파일 경로
 
+```text
+raw/{source}/{collected_date}/{object_key_hash}/{file_role}__v{version_seq}.{ext}
+raw/{source}/{collected_date}/{object_key_hash}/{file_role}__v{version_seq}.{ext}.meta.json
 ```
-raw/{source}/{collected_date}/{source_doc_key}__v{version_seq}.{ext}
-```
 
-- `source`: 소스 식별자(예: `dart`, `kofia_disclosure`, `sanction`, `dispute`).
-- `collected_date`: 수집을 실행한 날짜(YYYY-MM-DD). 기준일이 아니라 실제 수집 시각의 날짜를 쓴다.
-- `source_doc_key`: 01 문서 표의 소스 공통 자연키(DART는 rcept_no, 금투협 수시공시는 `(companyCd, standardDt, announceTtl, tmpV1)` 해시, 제재공시는 **`(소스, emOpenNo)`** — 경영유의사항 공시를 함께 받으면 같은 번호 공간을 쓰는지 미실측이라 소스를 앞에 둔다(`14` 6절) —, 분쟁조정은 게시글 번호).
-- `version_seq`: 같은 자연키를 다시 받았을 때 증가하는 버전 번호. 아래 「같은 문서를 다시 받았을 때」 참조.
-
-**결정**: 경로에 문서 자연키(`source_doc_key`)를 그대로 노출한다.
-**근거**: 파일명만 보고도 어느 원본인지 추적할 수 있어야 파싱·매칭 실패를 역추적하기 쉽다. 내부 발급 서러게이트 키만 쓰면 원본과 파일을 대조할 때마다 메타데이터를 열어봐야 한다.
-
-**2단계 데이터 파이프라인 Flow 설계 후보 (00b A4)**: 사람이 읽는 논리 경로를 `raw/{source}/{yyyy}/{mm}/{dd}/{source_doc_key}/{filename}` 형태로 세분화하고 파일 실체를 `blobs/{sha256 앞 2자}/{sha256}`에 두는 콘텐츠 주소 저장(CAS) 구조는 09-16에 채택하지 않는다. **12로 이 판단이 굳어졌다**: CAS를 밀던 당면 근거가 금투협 중복 제거였는데, 그것이 `fileNm` 비교만으로 해소됐다. 원본이 불변 보존되는 한 나중에 `blobs/`로 재배치하는 것은 되돌릴 수 있는 결정이므로, 소스 간 중복 같은 다른 근거가 생길 때 2단계 데이터 파이프라인 Flow 설계에서 다시 판단한다.
-
-## 파일명 규칙
-
-`{source_doc_key}__v{version_seq}.{ext}` 형태로, source 식별자는 상위 폴더가 이미 담당하므로 파일명에는 자연키와 버전만 넣는다.
-
-**금투협 첨부 (12 반영)**: 한 공고에 첨부가 2~3종이므로 `{source_doc_key}__v{n}__{file_role}.{ext}` 형태로 역할을 파일명에 드러낸다. `file_role`은 01의 값(`prospectus` / `prospectus_simple` / `change_summary`)을 그대로 쓴다.
-**근거**: 금투협은 문서 1건이 공고 단위라 `document_type`이 「금투협 수시공시」 한 값이다. 파일명에 역할이 없으면 저장된 파일만 보고 어느 것이 채점 대상 투자설명서인지 알 수 없다. 서버 저장명(`fileNm`)은 `1e8761fba739…-3081-20260814100636.pdf` 형태라 역할을 담지 않는다.
-**메타데이터 추가 항목**: `file_name`(서버 저장명 `fileNm` 원문), `original_file_name`(`originalFileNm`), `server_path`. 중복 판정에 `fileNm`을 쓰므로 반드시 남긴다.
-
-**미확인**: 국가법령정보처럼 자연키가 `MST`+`JO` 조합인 소스의 파일명 표기 방식은 01의 조인 미확인 항목이 풀린 뒤 정한다.
-
-## 원본 불변 원칙
-
-**결정**: 한 번 저장된 원본 파일의 내용은 이후 절대 덮어쓰거나 수정하지 않는다.
-**근거**: 파싱·구조화 단계에서 문제가 생겼을 때 원본으로 재현할 수 있어야 하고, 정정본 판별(06)도 같은 자연키의 버전 이력을 근거로 삼기 때문이다.
-
-## 같은 문서를 다시 받았을 때: 버전 누적
-
-**결정**: 덮어쓰지 않고 `version_seq`를 증가시켜 새 파일로 누적 저장한다.
-**근거**: 원본 불변 원칙과 상충하지 않는 유일한 방법이 누적이다. 또한 06에서 원본/정정본 규칙을 정할 때 이 버전들을 실제 입력으로 쓴다. 덮어쓰기를 택하면 정정 여부 판단에 쓸 이전 버전이 사라진다.
-
-**결정 (아키텍트, 09-16 반영)**: 같은 자연키(source_doc_key)를 다시 받았을 때, 원본파일 표(01)의 `sha256` 칸으로 비교해 해시가 이전 버전과 같으면 새 버전을 만들지 않고 본문 추출도 건너뛴다.
-**근거**: 재시도·재수집으로 내용이 같은 파일을 다시 받는 경우와 실제 정정본이 새로 공시된 경우를 해시로 구분할 수 있다. 해시가 같으면 정정이 아니라 단순 재수집이므로 버전을 늘릴 이유가 없다.
-
-**결정 (아키텍트, 09-16 반영 · 12로 확정)**: 금투협 클래스 행 N개가 같은 파일을 가리키는 경우 1회만 저장·추출한다.
-**근거**: 실측으로 확인했다(12 6절). 운용사 4곳 묶음 4개(14~15행)에서 행별 첨부 파일 집합이 전부 1종이었다.
-**중복 판정은 `fileNm`으로 한다 (12 반영)**: 금투협이 주는 서버 저장명(`fileNm`)이 이미 파일마다 고유하다. sha256을 얻으려고 같은 파일을 15번 내려받을 필요가 없다. 다운로드 **전에** `fileNm`으로 접고, sha256은 받은 뒤 검증용으로 기록한다.
-
-**미확인**: 같은 날 같은 자연키를 여러 번 재수집했을 때(재시도 등)와 실제 정정본이 새로 공시되었을 때를 위 sha256 비교 규칙만으로 완전히 구분할 수 있는지는 06과 03의 재시도 정책이 정해진 뒤 다시 확인한다.
-
-## 파일 옆에 남길 메타데이터
-
-같은 폴더에 `{source_doc_key}__v{version_seq}.meta.json`으로 원본 파일과 짝을 맞춰 둔다.
-
-| 항목 | 설명 |
+| 요소 | 의미 |
 |---|---|
-| collected_at | 수집 시각(요청을 보낸 시각) |
-| request_params | 요청에 사용한 파라미터 전체 |
-| response_code | 응답 코드(HTTP 상태 등) |
-| sha256 | 원본 파일의 해시값 (00b 반영, 구 file_hash) |
+| source | 서비스/엔드포인트 이름공간. 제재와 경영유의 API는 구분 |
+| collected_date | 실제 수집 UTC 날짜 YYYY-MM-DD. 원천 기준일과 별개 |
+| object_key_hash | source_object_key의 정규화된 원천 구성 필드를 UTF-8 JSON으로 직렬화한 SHA-256 |
+| source_object_key | 문서: 문서키+역할+첨부 식별자. API: 서비스+기준일/조회기간+페이지+비밀값 없는 필터 |
+| file_role | cover_html/cover_xml/body_pdf/api_response/attachment/prospectus/prospectus_simple/change_summary |
+| version_seq | 동일 source/source_object_key의 바이트 버전. 1부터 시작 |
+| ext | 실제 콘텐츠 형식에 따라 결정. 오류 HTML을 pdf로 저장하지 않음 |
 
-**근거**: 이 4항목은 01 원본파일(raw_object) 표의 칼럼과 1:1로 대응한다. 표는 조회·집계용이고, 파일 옆 메타데이터는 표가 유실되거나 재구축이 필요할 때의 원본 소스 역할을 한다.
+**왜 바꿨나**: 기존 `{문서키}__v1.meta.json`은 DART XML/PDF의 metadata가 충돌했고, 역할만 추가해도 같은 역할의 여러 첨부를 구분하지 못했다. 파일 식별자가 경로를 구분하고 meta.json은 **확장자까지 포함한 정확한 파일명**에 붙인다. 원천 이름에 슬래시·쿼리·한글 등이 있어도 경로 구성으로 직접 사용하지 않는다. 읽기 쉬운 문서키와 원래 파일명은 metadata에 보존한다.
 
-## DART 투자설명서: 접수번호 하나에 원본 파일 둘 (web-verify 반영, 08 참조)
+## 2. 원본과 요청은 다른 단위
 
-**결정**: 같은 자연키(rcept_no)에 대해 `.xml`(document.xml API 응답: 표지·정정요약·PDF 링크)과 `.pdf`(`download.do?dcmNo=&flNm=`로 받은 본문)를 각각 저장한다. 파일명은 `{rcept_no}__v{n}.xml`, `{rcept_no}__v{n}.pdf`. 간이투자설명서 등 첨부는 `{rcept_no}__v{n}__attach_{k}.{ext}`.
-**근거**: API의 [본문] 요소는 PDF 다운로드 링크 한 줄이라 XML만 저장하면 절 본문이 없다(web-verify A1). PDF만 저장하면 위험등급·펀드코드·판매회사가 있는 표지를 잃는다.
-**메타데이터 추가 항목**: `dcm_no`, `file_name`(flNm 원문), `download_url`, `body_format`(pdf / hwp5 / hwp3 / hwp_dist). 위 4항목에 더해 `.meta.json`에 함께 남긴다.
-**미확인**: document.xml zip 안에 PDF가 동봉되는지. 동봉되면 `download.do` 호출이 필요 없다.
+- `raw_object`는 실제 저장한 바이트의 버전이다. SHA-256·storage_path는 필수다.
+- `collection_attempt`는 요청 한 번이다. 타임아웃처럼 바이트가 없으면 raw_object_id=NULL인 시도만 기록한다. 가짜 파일·빈 해시를 만들지 않는다.
+- HTTP 오류라도 응답 바이트가 있으면 원본으로 보존할 수 있다. `collect_status=failed`인 파일은 본문 추출 대상으로 쓰지 않는다.
+- 정상 빈 API 응답도 바이트가 있으면 보존하고, 시도 outcome=EMPTY로 기록한다.
+- 포털·KRX·목록 응답은 `document_id=NULL`로 저장한다. 파일을 보관하기 위해 가짜 공시 문서를 만들지 않는다.
+- 문서와 파일 연결은 별개다. 같은 바이트가 여러 문서에 등장하면 각 문서의 연결을 남긴다. CAS로 실체를 공유할지는 별도 결정이다.
+
+## 3. 버전·중복·재추출
+
+동일 source/source_object_key의 최신 버전과 **바이트 SHA-256**을 비교한다.
+
+1. 같으면 새 파일 버전을 만들지 않고 collection_attempt가 기존 raw_object를 참조한다.
+2. 다르면 version_seq를 늘려 새 파일을 저장한다.
+3. 같은 파일도 **새 run_id의 파서/전처리**가 다르면 다시 추출한다. 중복 다운로드 생략과 재추출 생략을 같은 규칙으로 처리하지 않는다.
+4. 같은 run_id의 재시도는 키를 유지하고 결과를 멱등 처리한다. 완료 실행의 결과는 수정하지 않는다.
+
+`document.version_no`는 확인된 공시 정정 계보, `raw_object.version_seq`는 파일 바이트 버전, `run_id`는 처리 실행이다. **해시가 같다는 이유로 두 공시가 정정 관계가 아니라고 결론 내리지 않는다.**
+
+금투협 수시공시의 같은 공고 안에서 동일 `server_path + fileNm`을 가리키는 클래스 행은 다운로드 전에 접는다. 서로 다른 공고/날짜의 같은 파일명이 항상 불변이라는 가정은 하지 않는다. 수시공시 4필드 문서키와 정기공시 구분은 01·12를 따른다.
+
+## 4. Metadata
+
+모든 파일 metadata는 다음을 포함한다.
+
+| 항목 | 내용 |
+|---|---|
+| raw_object_id, source, source_object_key, version_seq | 원본 식별 |
+| document_id, source_doc_key, source_key_payload | 문서 파일이면 원천 공시 식별, API 스냅숏이면 NULL |
+| file_role, file_name, original_file_name, server_path | 역할·서버명·표시명·서버 위치 |
+| body_format, content_type, sha256, storage_path | 실제 형식·바이트 해시·저장 경로 |
+| collected_at, source_baseline_date | UTC 수집 시각과 원천 기준일 |
+| request_params, endpoint/download_url | **인증값 제거**된 JSON/URL. 헤더 AUTH_KEY, serviceKey, crtfc_key, authKey 등 원문 금지 |
+| credential_ref | 필요하면 비밀값 저장소의 참조 이름만 |
+| http_status, source_result_code, collect_status | 전송/업무 응답/파일 검증 결과 구분 |
+| attempt_id, run_id | 파일을 확보한 요청/실행 연결 |
+
+DB에서 빠진 원본도 복원할 수 있도록 파일 식별·해시·원천 정보를 함께 남긴다. 실패 요청 중 파일이 없는 경우는 별도의 시도 로그가 복구 원천이다. 전체 요청 로그를 출력하면서 인증 URL을 노출하지 않는다.
+
+## 5. DART와 소스 간 중복
+
+- 공개 `viewer.do` 표지는 **HTML**(`cover_html`)로 보관한다. 공개 뷰어 표지의 실측을 API `document.xml` 응답 실측으로 취급하지 않는다.
+- `document.xml` API 응답은 ZIP을 원바이트로 보관한다. 내부 XML/PDF 동봉 여부는 확인 후 기록한다. 공개 뷰어 경로와 API 경로를 혼합해 문서당 정확히 2파일을 강제하지 않는다.
+- 본문 PDF는 별도 `body_pdf`다. 간이투자설명서는 DART 본문 안의 실제 요약 구간일 수 있으므로 반드시 별도 첨부라고 가정하지 않는다.
+- 금투협 간이 PDF와 DART 본문 속 요약 구간은 파일 해시가 달라도 내용이 중복될 수 있다. 파일 해시 교집합 0은 문서 내용 중복 0의 증거가 아니다.
+- CAS는 바이트 저장 중복 문제를 해결할 수 있지만, 비교 모집단의 펀드/대표본 중복 문제는 해결하지 못한다.
+
+## 6. 파생 텍스트·실행 스냅숏
+
+```text
+derived/{run_id}/text/{raw_object_id}.txt
+runs/{run_id}/inputs.json
+runs/{run_id}/populations/{population_snapshot_id}.json
+```
+
+canonical text는 UTF-8/LF이며 파일 전체 텍스트를 보존한다. `file_extraction`에 경로·해시·Unicode code point 길이를 남긴다. 각 지표에 따라 표/표준문안을 제외할 수 있지만 원문 텍스트를 전역 삭제하지 않는다.
+
+입력·모집단 manifest는 완료 후 불변이고 해시 검증/백업 대상이다. 최소 내용은 [18](18_schema_review.md) 5절. 저장 제품·원자적 게시 방식·백업 스케줄은 Gate B에서 결정한다.

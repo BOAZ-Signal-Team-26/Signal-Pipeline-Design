@@ -5,3 +5,5 @@ _raw/
 .env.*
 !.env.example
 secrets/
+.omc/
+.serena/

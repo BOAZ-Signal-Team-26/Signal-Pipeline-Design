@@ -1,5 +1,8 @@
 # 15. 데이터 소스 API 명세 (엔지니어링 참조)
 
+
+> 09-22 정합성 보완: 현재 스키마·키·실행/모집단 계약은 [논리 스키마](01_logical_schema.md)와 [검토 보고서](18_schema_review.md)를 우선한다.
+
 **이 문서의 범위는 「어떻게 호출해서 받아오는가」 하나다.** 받은 뒤의 일 — 원본 보관은 `02`,
 수집·파싱 실패 판정은 `03`, 조인 키는 `01`, 각 사실의 실측 근거는 `09`·`10`·`12`·`13`·`14`에 있다.
 같은 내용을 여기에 다시 쓰지 않는다. 두 벌이 되면 반드시 어긋난다.
@@ -177,7 +180,7 @@ GET https://apis.data.go.kr/1160100/service/GetFundProductInfoService/getStandar
     ?serviceKey={키}&numOfRows=1000&pageNo={n}&resultType=json
 ```
 
-- **인증**: `DATA_GO_KR_API_KEY`. `serviceKey`는 **URL 인코딩하지 않는다**(`safe=""`로 encode).
+- **인증**: `DATA_GO_KR_API_KEY`. `serviceKey`는 디코딩된 원문 키를 쿼리 인코더로 **한 번만 URL 인코딩**한다. 이미 인코딩된 키를 다시 인코딩하지 않는다.
 - **페이징**: `numOfRows` 최대 1,000. `response.body.totalCount`까지 `pageNo`를 올린다. 184페이지.
 - **응답**: `response.body.items.item`. **1건일 때 배열이 아니라 객체로 온다** — 리스트로 감싸야 한다.
 - **쓰는 필드**: `srtnCd`(단축코드 5자리) `asoStdCd`(표준코드) `fndNm` `setpDt` `fndTp`
@@ -233,7 +236,7 @@ Header: AUTH_KEY: {키}
   | 2026-09-04 | 1,167 |
 
   **「오늘 안 받으면 재구성할 수 없다」는 ETF에는 해당하지 않는다.** 과거 일자를 그대로 주므로
-  일별 스냅숏은 나중에 몰아 받아도 된다. 상장폐지 판정용 차집합도 과거 구간에서 만들 수 있다.
+  일별 스냅숏은 나중에 몰아 받아도 된다. 상장폐지 후보 차집합도 과거 구간에서 만들 수 있다. 확정에는 거래일·응답 완전성·공식 상장폐지 근거를 확인해야 한다.
   적재 주기·보관 범위 결정을 서두를 이유가 없어졌다(`03` 반영).
 - **우회로 없음**: `data.krx.co.kr`의 비공식 `getJsonData.cmd`는 세션을 요구해 `LOGOUT`만 준다.
 
@@ -295,8 +298,7 @@ GET https://opendart.fss.or.kr/api/document.xml?crtfc_key={키}&rcept_no={접수
 
 ## 5. 금감원 OPEN API — 검사결과제재 · 경영유의사항 등 공시
 
-**두 API는 같은 표의 두 뷰다.** 요청 변수도 결과 필드 13개도 이름까지 같고, 예시의
-`examMgmtNo`가 동일하다. 다른 것은 경로와 구분 필드뿐이다(`14` 6절).
+**두 API는 공개 명세의 요청 변수·결과 필드가 같다.** 예시의 `examMgmtNo`도 같지만 내부 저장 테이블이나 레코드 동일성은 확인되지 않았다. 소스 이름공간과 원천 키를 각각 보존한다(`14` 6절, `18`).
 
 ```
 GET https://www.fss.or.kr/fss/kr/openApi/api/openInfo.jsp        # 검사결과제재
