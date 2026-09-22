@@ -12,7 +12,11 @@
 
 프로세스·WBS·스프린트 계획은 [Project-Management](https://github.com/BOAZ-Signal-Team-26/Project-Management)에 있습니다. 이 저장소는 「무엇을 어떻게 만들 것인가」만 다룹니다.
 
-## 현재 검토안 (2026-09-22)
+## 현재 검토안 (2026-09-23)
+
+[미결정 포함 재검토](gate-a/19_pending_decisions_review.md)에 최신 Notion 대조 결과를 정리했습니다. **14개 표는 현재 기준안이며, 추가 표 수는 미정**입니다. 문서/문서쌍 지표와 검증이라는 두 확장 영역의 계산 단위·키·결측·최종 출력 계약을 먼저 확정합니다.
+
+09-22 [저장소 구성 결정](https://app.notion.com/p/3e2e1ac70505818cbf66d63c9b45e782)은 `signal-pipeline`(코드+설계), `signal-infra`(클라우드 구축), `project-management`(계획) 세 개입니다. 이 저장소를 `signal-pipeline`으로 개명하고 설계를 `docs/`에 통합할 계획이며, 현재 경로는 유지합니다. 개명·이관·권한 설정 완료를 뜻하지 않습니다. 폴더 초안의 PostgreSQL/Alembic 예시는 DB 제품 승인으로 간주하지 않습니다.
 
 Notion의 09-20 결정과 저장소 표본을 대조한 [스키마 재검토 기록](gate-a/18_schema_review.md)을 먼저 읽습니다. [논리 스키마·ERD](gate-a/01_logical_schema.md)와 [DBML](gate-a/schema.dbml)은 **14개 표의 수정 제안**으로 동기화했습니다. 09-30 팀/DS 승인이나 DB 구축이 끝난 상태는 아닙니다. 데이터 형태·수정 근거·아직 필요한 결정과 검증 결과는 재검토 기록에 있습니다.
 

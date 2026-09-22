@@ -72,6 +72,10 @@ DB에서 빠진 원본도 복원할 수 있도록 파일 식별·해시·원천 
 
 ## 6. 파생 텍스트·실행 스냅숏
 
+09-23 경로 계약 보완안: 이 문서의 RAW_ROOT는 `raw/`, `derived/`, `runs/`를 포함하는 **공통 데이터 루트**를 뜻한다. 예를 들어 로컬 루트가 `/data/signal`이고 storage_path가 `raw/dart/...`이면 실제 경로는 `/data/signal/raw/dart/...`다. 루트를 이미 `/data/signal/raw`로 잡아 `raw/raw`를 만들지 않는다. 기존 운영 설정이 확인되면 09-25 동결 전에 이 규약과 대조한다.
+
+canonical_text_path, input_manifest_path, membership_manifest_path도 같은 루트 기준 상대경로를 사용한다. 절대경로·상위 경로 이동(`..`)·인증 토큰 포함 URL을 파일 참조로 저장하지 않는다. 스토리지 전환 시 루트/버킷 설정만 바꾸고 상대 객체 키와 해시는 유지한다. CAS 채택 시 blob_path도 같은 원칙을 따른다.
+
 ```text
 derived/{run_id}/text/{raw_object_id}.txt
 runs/{run_id}/inputs.json
