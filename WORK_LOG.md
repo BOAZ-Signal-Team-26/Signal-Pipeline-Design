@@ -7,7 +7,9 @@
 - A 반영 파일: [schema.dbml](gate-a/schema.dbml)(run_kind/upstream_run_id/is_official/published_at, extraction_run_id, population_snapshot 유일키·중복 칼럼, enum 16개, metric_definition.direction), [20](gate-a/20_erd_redesign.md)(A5 문구, v2.1 절), [21](gate-a/21_schema_catalog.md)(칼럼·키·enum·공개 식별자 규칙), [01](gate-a/01_logical_schema.md)(6절, ERD), [02](gate-a/02_raw_storage_policy.md)(경로 표), [gate-b/README](gate-b/README.md)(참조), README(관계 수).
 - architect 에이전트가 1차 반영을 검증했다(A1~A6 정확, HIGH 1건: section_id를 run 무관 공개 ID로 분류한 오류). HIGH-1과 M-1~M-5·L-1~L-3을 2차 반영했다: extraction_run_id를 복합 FK로 upstream과 묶음, member.run_id 삭제, run 종류·기준일·공식 run 검증 목록을 20에 추가, 공개 식별자 표에서 section_id를 "(run_id, section_id) 쌍" 행으로 이동. 상세는 22 「검증 결과」.
 - 검증(2차 반영 뒤): `@dbml/core` 파서 20개 표·47개 관계·enum 30개 통과, 모든 FK 부모 칼럼의 PK/UNIQUE 확인, PostgreSQL SQL 메모리 내보내기 성공, Mermaid 관계선 47개 일치, `git diff --check` 통과. 상태성 varchar 칼럼 잔여는 `score_dependency.input_role`(B1 보류 표) 하나.
-- 수행하지 않은 것: B 조치(표 제외·artifact 표·평가 스키마 분리·서빙 계약·grader_key 등), Notion 동기화, 커밋·푸시, 실제 DB 적용. 22의 행 수·작업량 추정치는 검증하지 않았다.
+- 커밋 63ed75e로 `origin/main`에 푸시했다(v2 + v2.1 함께).
+- Notion 동기화(요약과 GitHub 링크만, 정본은 GitHub): 「데이터 테이블·ERD 설계」 산출물 페이지(상단 정본 안내 callout, pipeline_run 설명, 인수 체크, 검증 결과, 9절 v2.1 요약 신설 — 표별 상세 2·3·7절은 v2 스냅숏으로 두고 갱신하지 않음), 「Schema & Relation」 티켓(한 줄 요약, v2.1 요약, Mermaid의 pipeline_run·analysis_target·member 블록과 관계선, 검증, 남은 것, 인수 체크, 설계 문서 링크), 「파이프라인 Flow」 티켓(입력 표 20개·실행 모델·09-26 골든패스·경로 규약, 완료 조건의 run_id 항목, 선행 의존). 회의록 원문은 수정하지 않았다. 「9차 미팅 09-30」 페이지는 조회 결과에 삭제 표시가 있어 B 안건 추가를 보류했다.
+- 수행하지 않은 것: B 조치(표 제외·artifact 표·평가 스키마 분리·서빙 계약·grader_key 등)는 09-30 결정 대기, 실제 DB 적용. 22의 행 수·작업량 추정치는 검증하지 않았다.
 
 ## 2026-09-23 — ERD v2 중단 작업 이어서 완료
 
