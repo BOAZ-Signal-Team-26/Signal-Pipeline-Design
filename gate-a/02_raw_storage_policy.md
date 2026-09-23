@@ -74,13 +74,19 @@ DB에서 빠진 원본도 복원할 수 있도록 파일 식별·해시·원천 
 
 09-23 경로 계약 보완안: 이 문서의 RAW_ROOT는 `raw/`, `derived/`, `runs/`를 포함하는 **공통 데이터 루트**를 뜻한다. 예를 들어 로컬 루트가 `/data/signal`이고 storage_path가 `raw/dart/...`이면 실제 경로는 `/data/signal/raw/dart/...`다. 루트를 이미 `/data/signal/raw`로 잡아 `raw/raw`를 만들지 않는다. 기존 운영 설정이 확인되면 09-25 동결 전에 이 규약과 대조한다.
 
-canonical_text_path, input_manifest_path, membership_manifest_path도 같은 루트 기준 상대경로를 사용한다. 절대경로·상위 경로 이동(`..`)·인증 토큰 포함 URL을 파일 참조로 저장하지 않는다. 스토리지 전환 시 루트/버킷 설정만 바꾸고 상대 객체 키와 해시는 유지한다. CAS 채택 시 blob_path도 같은 원칙을 따른다.
+canonical_text_path, input_manifest_path, membership_manifest_path, structure_manifest_path, protocol/response/summary_manifest_path도 같은 루트 기준 상대경로를 사용한다. 절대경로·상위 경로 이동(`..`)·인증 토큰 포함 URL을 파일 참조로 저장하지 않는다. 스토리지 전환 시 루트/버킷 설정만 바꾸고 상대 객체 키와 해시는 유지한다. CAS 채택 시 blob_path도 같은 원칙을 따른다.
 
 ```text
-derived/{run_id}/text/{raw_object_id}.txt
-runs/{run_id}/inputs.json
-runs/{run_id}/populations/{population_snapshot_id}.json
+derived/{extract_run_id}/text/{raw_object_id}.txt
+derived/{extract_run_id}/structure/{raw_object_id}.json          # file_extraction.structure_manifest_path (v2)
+runs/{run_id}/inputs.json                                        # EXTRACT·SCORE run 모두
+runs/{score_run_id}/populations/{population_snapshot_id}.json
+runs/{score_run_id}/eval/{evaluation_run_id}/protocol.json       # evaluation_run.protocol_manifest_path (v2)
+runs/{score_run_id}/eval/{evaluation_run_id}/responses.json      # evaluation_run.response_manifest_path (v2)
+runs/{score_run_id}/eval/{evaluation_run_id}/summary.json        # evaluation_run.summary_manifest_path (v2)
 ```
+
+09-23 v2.1 보완([22](22_erd_v2_review.md) A2·A6): `derived/`는 추출 실행(EXTRACT run) 아래, `populations/`·`eval/`은 채점 실행(SCORE run) 아래에 둔다. 채점 실행은 `pipeline_run.upstream_run_id`로 추출 실행을 가리키므로 산식만 바뀐 재채점은 `derived/`를 새로 만들지 않는다. `eval/` 하위는 접근 제한 자료이며 저장 위치·권한 분리는 22 B4(09-30 결정)로 남긴다. 경로에 DB 서러게이트 ID가 들어가는 문제(22 M7)와 manifest 내용 주소화(22 B9)는 Gate B에서 결정한다.
 
 canonical text는 UTF-8/LF이며 파일 전체 텍스트를 보존한다. `file_extraction`에 경로·해시·Unicode code point 길이를 남긴다. 각 지표에 따라 표/표준문안을 제외할 수 있지만 원문 텍스트를 전역 삭제하지 않는다.
 

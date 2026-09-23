@@ -1,6 +1,6 @@
-# 01. 논리 스키마·ERD — 2026-09-22 재검토안
+# 01. 논리 스키마·ERD — 2026-09-23 재설계 v2
 
-이 문서는 `schema.dbml`과 함께 현재 설계안을 정의한다. 검토 근거·원천 자료형·수정 이유·미결 사항은 [18_schema_review.md](18_schema_review.md)에 있다.
+이 문서는 `schema.dbml`과 함께 현재 설계안을 정의한다. 09-23 변경과 조건부 무결성 계약은 [20_erd_redesign.md](20_erd_redesign.md)를 우선한다. 검토 근거·원천 자료형·수정 이유·미결 사항은 [18_schema_review.md](18_schema_review.md)에 있다.
 
 **상태**: 09-20 팀 결정(run_id 통일, fund_key 고정, 비교 모집단 별도 표)을 구조로 옮기고 실제 데이터와 충돌하는 제약을 수정한 **검토안**이다. 신규 칼럼명·자료형·제약의 09-30 팀 승인이나 DS의 09-30 인계 승인이 끝났다는 뜻은 아니다. DB 제품·물리 DDL·인덱스 튜닝·decimal 정밀도는 이번 범위에서 확정하지 않는다.
 
@@ -16,14 +16,22 @@
 | document_product | 문서 × 상품 | 다대다 연결의 근거·방법·점수 |
 | raw_object | 저장한 응답/첨부 바이트의 한 버전 | 문서 파일뿐 아니라 상품/KRX/API 목록 원본 |
 | collection_attempt | 실행 안의 요청 한 번 | 파일이 없는 타임아웃, 정상 0건, 재시도도 기록 |
-| pipeline_run | 논리 실행 하나 | 기준일·파서·산식·입력 스냅숏을 한 번호로 고정 |
+| pipeline_run | 논리 실행 하나 (EXTRACT 또는 SCORE) | 기준일·파서·산식·입력 스냅숏을 한 번호로 고정. 채점 실행은 upstream_run_id로 추출 실행을 참조, is_official이 공식 채점 실행 표시(v2.1) |
 | file_extraction | 원본 파일 × 실행 | 실행별 추출 상태와 전체 텍스트 |
 | section | 파일·실행 안의 실제 구간 하나 | 원문 부/절·요약과 정확한 위치 |
-| score | 실행 × 절 × 점수유형 | 절 점수. 산식 변경 시 새 실행 |
+| score | 실행 × 대상 × 지표 버전 × 평가자 | 원자값·축값·최종값 및 계산 불가 상태 |
 | population_snapshot | 실행 안의 비교 층 하나 | 비교 정의·건수·실제 구성원 스냅숏 |
 | match_failure | 매칭 시도 하나 | 상품/법인 후보·실패 사유·해결 기록 |
+| metric_definition | 지표의 불변 버전 | 계산 단위·산식·승인 상태 |
+| analysis_target | 실행 안의 절/문서/쌍/펀드 대상 | 여러 계산 단위를 분리 |
+| analysis_target_member | 대상의 파일/구간과 역할 | 요약·본문·추가 근거 |
+| score_dependency | 출력 점수 × 입력 점수 × 역할 | 집계 근거와 실제 가중치 |
+| evaluation_run | 사람 또는 LLM 평가 실행 | 불변 프로토콜·원응답·분석 |
+| evaluation_response | 실행·쌍·응답자·문항·대상·조건·반복 | 원응답과 채점·결측 |
 
-기존 9개 표에 **fund_group, collection_attempt, pipeline_run, file_extraction, population_snapshot**을 더해 14개다. 앞의 셋을 모두 raw_object에 합치면 각각 상품 묶음·요청·실행 단위가 파일 단위와 충돌하고, 실행별 추출 결과가 없으면 과거 절을 재현할 수 없다. 설계 대안과 비용은 18의 ADR에 기록했다.
+09-23에 6개 표를 더해 **20개**다. score 일반화·계산 상태·구조 manifest를 함께 반영했다. 20의 계약을 따른다.
+
+09-22 이력: 기존 9개 표에 **fund_group, collection_attempt, pipeline_run, file_extraction, population_snapshot**을 더해 14개다. 앞의 셋을 모두 raw_object에 합치면 각각 상품 묶음·요청·실행 단위가 파일 단위와 충돌하고, 실행별 추출 결과가 없으면 과거 절을 재현할 수 없다. 설계 대안과 비용은 18의 ADR에 기록했다.
 
 ## 2. 상품과 법인
 
@@ -114,162 +122,200 @@ DART 공개 뷰어 표지는 HTML(`cover_html`)이다. `document.xml` API는 ZIP
 
 - 절의 (파일, 실행)은 실제 추출 결과를 가리킨다.
 - 절의 (파일, 문서)는 그 문서에 속한 파일을 가리킨다.
-- 점수의 (절, 실행)과 (모집단, 실행)은 동일 실행을 가리킨다.
-- 점수는 (실행, 절, 점수유형)마다 한 행이다.
+- 점수의 (대상, 실행)과 (모집단, 실행, 지표 버전)을 복합 FK로 연결한다.
+- 점수는 (실행, 대상, 지표 버전, 평가자)마다 한 행이다. 절 대상은 실제 section을 참조한다.
 
 짧은 절도 추출에 성공하면 `EXTRACT_OK`다. 계산 적합성은 `quality_flags`와 DS 규칙으로 분리한다. 실패 시 텍스트가 없으면 NULL이며 가짜 본문을 넣지 않는다.
 
-**절 점수 표는 모든 지표를 저장하는 만능 표가 아니다.** 문서 순서 준수·요약/본문 비교는 문서 또는 구간쌍 단위다. 절마다 값을 복제하거나 가짜 section을 만들어 넣지 않는다. 이 지표의 계약·CDI 4축 합산·고지충실도의 점수/필터 역할은 18의 잔여 결정이며 DS와 확정해야 한다.
+`analysis_target`은 SECTION/DOCUMENT/DOCUMENT_PAIR/FUND를 구분하고 `analysis_target_member`가 정확한 입력 파일·구간을 고정한다. 문서 순서·쌍 비교를 절마다 복제하지 않는다. `metric_definition`이 단위와 산식을 고정하고 `score_dependency`가 실제 원자값→축값→최종값 입력을 연결한다. 고지 충실도는 점수화 방향이며 배점·분모·적용범위는 DS 승인 대상으로 남는다. 계산 불가는 상태+NULL 원점수로 보존한다.
 
 ## 6. 실행과 비교 모집단
 
 `pipeline_run`의 `config_manifest`에 파서·전처리·산식·사전·매칭·코드 버전 및 설정을 고정한다. `input_manifest_path/sha256`에는 실제 사용한 원본 파일, 상품 속성·매칭·판매관계와 컷오프를 고정한다. run_id 문자열만 발급하고 이 정보를 현재 설정에서 다시 읽으면 재현성이 없다.
 
+- 실행은 `run_kind`로 나뉜다(v2.1, [22](22_erd_v2_review.md) A2). **EXTRACT**는 수집·추출·절·매칭·fund_group, **SCORE**는 대상·점수·모집단이다. SCORE는 `upstream_run_id`로 SUCCEEDED인 EXTRACT를 가리킨다.
 - 같은 실행의 네트워크 재시도는 동일 run_id, attempt_no만 증가.
-- 파서·산식·기준일·입력 스냅숏 변경은 새 run_id.
-- 이전 추출을 재사용할 때도 새 실행이 참조하는 파일·텍스트·설정을 명시하고 새 실행의 file_extraction/section을 생성한다. 과거 section 행의 run_id는 바꾸지 않는다.
+- 산식·가중치·평가자 설정·모집단 기준 변경은 **새 SCORE run**. 추출 결과(file_extraction/section)는 upstream EXTRACT의 것을 그대로 참조하며 다시 적재하지 않는다. `analysis_target`·`analysis_target_member`의 절/파일 FK는 `extraction_run_id`로 건다.
+- 파서·기준일·입력 스냅숏 변경은 새 EXTRACT run과 그것을 참조하는 새 SCORE run. SCORE run의 `baseline_date`는 upstream EXTRACT와 같다. 과거 section 행의 run_id는 바꾸지 않으며, `section_id`는 EXTRACT run마다 새로 발급되므로 공개 링크에는 `(run_id, section_id)` 쌍을 쓴다. 이 run_id는 EXTRACT run(`section.run_id`)이며, SCORE run_id가 오면 `upstream_run_id`로 해석한다.
 - 완료 실행은 불변. 부분 실행을 완료 모집단으로 노출하지 않는다.
+- 대시보드·API가 서빙하는 점수는 `is_official=true`인 SCORE run 하나의 것이다. 최신 완료 시각으로 추론하지 않는다.
 
 `population_snapshot`은 실행·기준일·비교 층·관측 단위·실제 구성원을 보존한다. `member_count`는 고유 fund_key 수다. 평균·표준편차·몇 개 분위수만으로 정확한 백분위는 재현되지 않으므로 포함/제외 목록과 원점수, 사용한 문서/파일/절 및 분류 당시 속성을 담은 불변 manifest를 둔다(18).
 
-관측 단위는 `fund_document` 또는 `fund_section`이다. 전자는 펀드당 대표 문서/파일의 집계값 하나, 후자는 같은 의미의 절별 펀드당 값 하나다. 후자의 비교 절 정의는 DS 승인 전 생성하지 않는다. **문서 분포에 절 원점수를 대입하지 않는다.** 문서 정규화는 문서 집계 후 수행하고 절 정규화가 정의되지 않았으면 score.normalized_score는 NULL이다.
+최종 층내 백분위는 오늘 회의록의 상품군×위험등급, 고유 펀드 30건 이상, 층 병합 없음 기준이다. 축간 변환은 별도 지표 버전/모집단/의존관계로 추적한다.
+
+관측 단위는 `fund_document` 또는 `fund_section`이다. 전자는 펀드당 대표 문서/파일의 집계값 하나, 후자는 같은 의미의 절별 펀드당 값 하나다. 후자의 비교 절 정의는 DS 승인 전 생성하지 않는다. **문서 분포에 절 원점수를 대입하지 않는다.** 문서 정규화는 문서 집계 후 DOCUMENT/FUND 대상의 score에 저장하며 절 정규화가 정의되지 않았으면 SECTION 대상의 normalized_score는 NULL이다.
 
 한 펀드에 여러 문서가 있는 것은 정상이다. 「문서 = 펀드」는 자동 성립하지 않는다. 기준일·문서 역할·소스 우선순위와 충돌 처리로 대표본을 선택하고 그 선택을 manifest에 고정해야 한다. 대표본 미확정은 제외 사유로 남긴다. [04](04_score_storage_and_population.md) 참조.
 
 ## 7. ERD
 
-DBML이 전체 칼럼·복합키의 기준이며, 아래 그림은 14개 표의 주요 관계를 나타낸다. nullable 및 실행 일치 제약은 위 설명과 함께 읽는다.
+DBML이 전체 칼럼·복합키의 기준이며, 아래 그림은 20개 표·47개 FK 관계를 나타낸다(v2.1: pipeline_run 자기 참조와 analysis_target.extraction_run_id 추가). 복합 FK는 한 선으로 표시하며 주요 키 칼럼을 담았다. nullable 및 실행 일치 제약은 위 설명과 함께 읽는다.
 
 ```mermaid
 erDiagram
-    fund_group {
-        string fund_key PK
-        int manager_id FK
-        string created_run_id FK
-    }
     product {
         int product_id PK
-        string short_code "NOT UNIQUE"
-        string fund_key FK
+        varchar fund_key FK
         int manager_id FK
         int source_raw_object_id FK
         int risk_grade_raw_object_id FK
     }
     distributor {
         int distributor_id PK
-        string kofia_sales_code UK
-        string kofia_mgmt_code
-        string corp_code
+        varchar kofia_sales_code UK
     }
     product_distributor {
         int product_id PK,FK
         int distributor_id PK,FK
-        string snapshot_month PK
-        date observed_date
+        varchar snapshot_month PK
         int source_raw_object_id FK
         int source_document_id FK
     }
     document {
         int document_id PK
-        string source "composite UK with source_doc_key"
-        string source_doc_key
-        int lineage_id FK
         int distributor_id FK
+        int lineage_id FK
     }
     document_product {
         int document_id PK,FK
         int product_id PK,FK
     }
-    raw_object {
-        int raw_object_id PK
-        int document_id FK "nullable for API snapshots"
-        string source
-        string source_object_key
-        int version_seq
-        string sha256
-    }
-    collection_attempt {
-        int attempt_id PK
-        string run_id FK
-        int document_id FK
-        int raw_object_id FK "nullable when no bytes"
-    }
-    pipeline_run {
-        string run_id PK
-        date baseline_date
-        string config_sha256
-        string input_manifest_sha256
-    }
-    file_extraction {
-        int raw_object_id PK,FK
-        string run_id PK,FK
-        string extract_status
-        int text_length
-    }
     section {
         int section_id PK
         int document_id FK
         int raw_object_id FK
-        string run_id FK
-        int section_seq
-        int part_seq
-        string source_section_no
+        varchar run_id FK
     }
     score {
         int score_id PK
-        int section_id FK
-        string run_id FK
+        int target_id FK
+        varchar run_id FK
+        varchar metric_key FK
         int population_snapshot_id FK
-    }
-    population_snapshot {
-        int population_snapshot_id PK
-        string run_id FK
-        string observation_unit
-        int member_count
-        string membership_manifest_sha256
     }
     match_failure {
         int failure_id PK
-        string run_id FK
-        int related_document_id FK
-        int top1_candidate_product_id FK
+        varchar run_id FK
         int top1_candidate_distributor_id FK
+        int top1_candidate_product_id FK
+        int related_document_id FK
     }
-    distributor |o--o{ product : manager
-    distributor ||--o{ fund_group : manager
-    fund_group |o--o{ product : fixed_group
-    pipeline_run ||--o{ fund_group : created_in
-    product ||--o{ product_distributor : sold_by
-    distributor ||--o{ product_distributor : sells
-    raw_object ||--o{ product_distributor : evidence
-    document |o--o{ product_distributor : optional_evidence
-    raw_object |o--o{ product : master_evidence
-    raw_object |o--o{ product : risk_evidence
-    document ||--o{ document_product : links
-    product ||--o{ document_product : links
-    document |o--o{ document : verified_root
-    distributor |o--o{ document : sanctioned_entity
-    document |o--o{ raw_object : attachments
-    pipeline_run ||--o{ collection_attempt : requests
-    raw_object |o--o{ collection_attempt : response
-    document |o--o{ collection_attempt : request_target
-    raw_object ||--o{ file_extraction : extracted
-    pipeline_run ||--o{ file_extraction : execution
-  file_extraction ||--o{ section : file_and_run
-  raw_object ||--o{ section : same_document
-    document ||--o{ section : document
-    section ||--o{ score : same_run
-    pipeline_run ||--o{ score : execution
-    pipeline_run ||--o{ population_snapshot : freezes
-    population_snapshot |o--o{ score : same_run
-    pipeline_run ||--o{ match_failure : matching
-    document |o--o{ match_failure : context
-    product |o--o{ match_failure : candidate
-    distributor |o--o{ match_failure : candidate
+    raw_object {
+        int raw_object_id PK
+        int document_id FK
+    }
+    fund_group {
+        varchar fund_key PK
+        int manager_id FK
+        varchar created_run_id FK
+    }
+    pipeline_run {
+        varchar run_id PK
+        run_kind_enum run_kind
+        varchar upstream_run_id FK
+        boolean is_official
+    }
+    collection_attempt {
+        int attempt_id PK
+        varchar run_id FK
+        int document_id FK
+        int raw_object_id FK
+    }
+    file_extraction {
+        int raw_object_id PK,FK
+        varchar run_id PK,FK
+    }
+    population_snapshot {
+        int population_snapshot_id PK
+        varchar run_id FK
+        varchar metric_key FK
+    }
+    metric_definition {
+        varchar metric_key PK
+    }
+    analysis_target {
+        int target_id PK
+        varchar run_id FK
+        varchar extraction_run_id FK
+        int section_id FK
+        int document_id FK
+        varchar fund_key FK
+    }
+    analysis_target_member {
+        int member_id PK
+        int target_id FK
+        varchar extraction_run_id FK
+        int raw_object_id FK
+        int section_id FK
+    }
+    score_dependency {
+        int output_score_id PK,FK
+        int input_score_id PK,FK
+        varchar run_id FK
+        varchar input_role PK
+    }
+    evaluation_run {
+        varchar evaluation_run_id PK
+        varchar scoring_run_id FK
+    }
+    evaluation_response {
+        int response_id PK
+        varchar evaluation_run_id FK
+        varchar scoring_run_id FK
+        int target_id FK
+    }
+    fund_group |o--o{ product : fund_key
+    distributor |o--o{ product : manager_id
+    raw_object |o--o{ product : source_raw_object_id
+    raw_object |o--o{ product : risk_grade_raw_object_id
+    product ||--o{ product_distributor : product_id
+    distributor ||--o{ product_distributor : distributor_id
+    raw_object ||--o{ product_distributor : source_raw_object_id
+    document |o--o{ product_distributor : source_document_id
+    distributor |o--o{ document : distributor_id
+    document |o--o{ document : lineage_id
+    document ||--o{ document_product : document_id
+    product ||--o{ document_product : product_id
+    document ||--o{ section : document_id
+    pipeline_run ||--o{ score : run_id
+    metric_definition ||--o{ score : metric_key
+    pipeline_run ||--o{ match_failure : run_id
+    distributor |o--o{ match_failure : top1_candidate_distributor_id
+    product |o--o{ match_failure : top1_candidate_product_id
+    document |o--o{ match_failure : related_document_id
+    document |o--o{ raw_object : document_id
+    distributor ||--o{ fund_group : manager_id
+    pipeline_run ||--o{ fund_group : created_run_id
+    pipeline_run ||--o{ collection_attempt : run_id
+    document |o--o{ collection_attempt : document_id
+    raw_object |o--o{ collection_attempt : raw_object_id
+    raw_object ||--o{ file_extraction : raw_object_id
+    pipeline_run ||--o{ file_extraction : run_id
+    pipeline_run ||--o{ population_snapshot : run_id
+    metric_definition ||--o{ population_snapshot : metric_key
+    file_extraction ||--o{ section : raw_object_id_run_id
+    raw_object ||--o{ section : raw_object_id_document_id
+    analysis_target ||--o{ score : target_id_run_id
+    population_snapshot |o--o{ score : population_snapshot_id_run_id_metric_key
+    pipeline_run |o--o{ pipeline_run : upstream_run_id
+    pipeline_run ||--o{ analysis_target : run_id
+    pipeline_run ||--o{ analysis_target : run_id_extraction_run_id_to_upstream
+    document |o--o{ analysis_target : document_id
+    fund_group |o--o{ analysis_target : fund_key
+    pipeline_run ||--o{ evaluation_run : scoring_run_id
+    section |o--o{ analysis_target : section_id_extraction_run_id
+    analysis_target ||--o{ analysis_target_member : target_id_extraction_run_id
+    file_extraction ||--o{ analysis_target_member : raw_object_id_extraction_run_id
+    section |o--o{ analysis_target_member : section_id_raw_object_id_extraction_run_id
+    score ||--o{ score_dependency : output_score_id_run_id
+    score ||--o{ score_dependency : input_score_id_run_id
+    evaluation_run ||--o{ evaluation_response : evaluation_run_id_scoring_run_id
+    analysis_target ||--o{ evaluation_response : target_id_scoring_run_id
 ```
 
 ## 8. 후속 확인
 
-09-23: 문서/문서쌍 지표와 검증은 **확장 영역 두 개**이며 정확히 표 두 개를 추가한다는 확정안이 아니다. 최종 문서 점수·계산 불가 상태·평가 원응답·다중 근거의 입도에 따라 기존 표의 키/관계도 재검토한다. [미결정 포함 재검토](19_pending_decisions_review.md)에 조건과 선행 결정을 기록했다.
+09-23 v2는 [19의 문제](19_pending_decisions_review.md)를 검토해 [20의 구조와 검증 계약](20_erd_redesign.md)으로 구체화했다. 지표별 산식·단위·배점·평가 프로토콜 승인과 운영 적재 검증은 후속 작업이다. 전체 칼럼과 상태값은 [스키마 명세](21_schema_catalog.md)에 있다.
 
 구체적인 원천 필드 → 논리 타입 → 목적지 대조표, 키 후보의 검증 수준, DBML 조건부 제약, DS 결정 항목은 [18 재검토 기록](18_schema_review.md)을 따른다. 과거의 「13/14 조인 확인」은 코드의 형태나 소스 존재 확인이며, 전체 경로의 유일성·커버리지·실행 가능성 보장이 아니다.

@@ -1,5 +1,26 @@
 # 작업 기록
 
+## 2026-09-23 — ERD v2 6관점 검토와 A 조치 반영 (v2.1)
+
+- v2(20표)를 architect·data-engineer·data-scientist·platform-engineer·cloud-architect·backend-developer 6개 관점으로 검토해 [22](gate-a/22_erd_v2_review.md)에 정리했다. 결론: 진단(19 R1/R3)은 맞고 처방이 과함. 표 수보다 run_id 결합과 DBML 밖 규칙 약 40개가 실제 비용.
+- 조치를 A(팀 결정 없이 고칠 수 있는 명백한 결함, 즉시 반영)와 B(09-30 팀 결정 요청)로 나눴다. A만 반영했다.
+- A 반영 파일: [schema.dbml](gate-a/schema.dbml)(run_kind/upstream_run_id/is_official/published_at, extraction_run_id, population_snapshot 유일키·중복 칼럼, enum 16개, metric_definition.direction), [20](gate-a/20_erd_redesign.md)(A5 문구, v2.1 절), [21](gate-a/21_schema_catalog.md)(칼럼·키·enum·공개 식별자 규칙), [01](gate-a/01_logical_schema.md)(6절, ERD), [02](gate-a/02_raw_storage_policy.md)(경로 표), [gate-b/README](gate-b/README.md)(참조), README(관계 수).
+- architect 에이전트가 1차 반영을 검증했다(A1~A6 정확, HIGH 1건: section_id를 run 무관 공개 ID로 분류한 오류). HIGH-1과 M-1~M-5·L-1~L-3을 2차 반영했다: extraction_run_id를 복합 FK로 upstream과 묶음, member.run_id 삭제, run 종류·기준일·공식 run 검증 목록을 20에 추가, 공개 식별자 표에서 section_id를 "(run_id, section_id) 쌍" 행으로 이동. 상세는 22 「검증 결과」.
+- 검증(2차 반영 뒤): `@dbml/core` 파서 20개 표·47개 관계·enum 30개 통과, 모든 FK 부모 칼럼의 PK/UNIQUE 확인, PostgreSQL SQL 메모리 내보내기 성공, Mermaid 관계선 47개 일치, `git diff --check` 통과. 상태성 varchar 칼럼 잔여는 `score_dependency.input_role`(B1 보류 표) 하나.
+- 수행하지 않은 것: B 조치(표 제외·artifact 표·평가 스키마 분리·서빙 계약·grader_key 등), Notion 동기화, 커밋·푸시, 실제 DB 적용. 22의 행 수·작업량 추정치는 검증하지 않았다.
+
+## 2026-09-23 — ERD v2 중단 작업 이어서 완료
+
+- 재개 시 작업 트리에서 20개 표로 수정된 DBML, 01 본문, 20 재설계 문서를 확인했다. 이전 세션 대화 전체가 아닌 저장된 작업 기록과 파일을 기준으로 이어갔다.
+- 01의 오래된 14개 표 그림을 20개 표·45개 FK 관계로 갱신했다. 복합 FK는 한 선으로 표시하고 nullable 관계를 반영했다.
+- 누락된 [21 스키마 명세](gate-a/21_schema_catalog.md)를 DBML에서 생성했다. 전체 245개 칼럼과 PK/UNIQUE/FK·상태값을 담았다.
+- README와 04 점수 정책을 v2에 맞췄다. 문서/쌍/펀드 점수, 원자값·축값·최종값의 개별 행, NULL 원점수와 결과 상태, 독립 정규화 상태를 반영했다. 18·19는 과거 검토 이력임을 표시했다.
+- 검증: 실제 `@dbml/core` 파서 20개 표·45개 관계 통과, 모든 FK 부모 칼럼의 PK/UNIQUE 확인, DBML과 Mermaid의 테이블·관계·FK 칼럼 목록 일치, 관련 Markdown 상대 링크 32개 존재 확인, PostgreSQL SQL 메모리 내보내기 성공, `git diff --check` 통과.
+- 검증은 논리 구조와 문서 일관성 범위다. Mermaid 이미지 렌더링, 조건부 적재 검증 구현, 실제 데이터 파일럿, 운영 DB 적용은 수행하지 않았다. SQL 내보내기는 DB 제품 선정이 아니다.
+- 이번 재개에서는 Notion을 새로 조회하거나 수정하지 않았다. 20의 기존 조회 기록을 보존했으며 산식·배점·평가 프로토콜·물리 DB 결정은 미확정으로 유지한다. 커밋·푸시는 하지 않았다.
+
+아래 기록은 v2 재설계 이전 검토 이력이다.
+
 ## 2026-09-23 — Notion 대조 및 미결정 사항을 포함한 ERD 재검토
 
 ### 요청과 기준
